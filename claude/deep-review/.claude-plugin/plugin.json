@@ -1,0 +1,12 @@
+{
+  "name": "deep-review",
+  "version": "0.1.0",
+  "description": "Three-axis code review of a branch or PR (correctness, structure, testing), plus a skill for acting on the review's findings.",
+  "author": {
+    "name": "effluvialsplurf"
+  },
+  "repository": "https://github.com/effluvialsplurf/ai-plugins",
+  "dependencies": [
+    "superpowers@claude-plugins-official"
+  ]
+}

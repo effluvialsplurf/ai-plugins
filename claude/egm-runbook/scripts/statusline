@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Status line segment: 'runbook: <feature> · <n>/9 <step>'; prints nothing without an active feature."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runbook  # noqa: E402
+
+sys.exit(runbook.statusline_main(sys.argv[1:]))

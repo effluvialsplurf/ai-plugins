@@ -1,0 +1,32 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-plugins",
+  "description": "Personal AI workflow plugins for Claude Code and Antigravity.",
+  "owner": {
+    "name": "effluvialsplurf",
+    "url": "https://github.com/effluvialsplurf/ai-plugins"
+  },
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-plugins-official"
+  ],
+  "plugins": [
+    {
+      "name": "deep-review",
+      "description": "Three-axis code review of a branch or PR (correctness, structure, testing), plus a skill for acting on the review's findings.",
+      "source": "./claude/deep-review",
+      "category": "development"
+    },
+    {
+      "name": "build-loop",
+      "description": "Run a planned feature end to end with agents (plan, plan check, build, review, PR) in three versions by the tools you have, plus the context and cache cost lessons as their own skill.",
+      "source": "./claude/build-loop",
+      "category": "development"
+    },
+    {
+      "name": "egm-runbook",
+      "description": "Per-feature runbook for the egm design steps and the superpowers build steps: tracks state, gives the next command, and blocks code and build skills until the egm review is concluded.",
+      "source": "./claude/egm-runbook",
+      "category": "development"
+    }
+  ]
+}

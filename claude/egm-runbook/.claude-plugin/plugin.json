@@ -1,0 +1,9 @@
+{
+  "name": "egm-runbook",
+  "version": "0.1.0",
+  "description": "Walk one feature through the egm design steps and then the superpowers build steps, keep the state outside the repo, and block code and build skills until the egm review is concluded.",
+  "author": {
+    "name": "effluvialsplurf"
+  },
+  "repository": "https://github.com/effluvialsplurf/ai-plugins"
+}
