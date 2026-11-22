@@ -90,7 +90,9 @@ install_antigravity() {
         fi
         rm "${dst}"
       elif [[ -e "${dst}" ]]; then
-        backup="${dst}.bak.$(date +%Y%m%d-%H%M%S)"
+        backup_dir="${HOME}/.cache/ai-plugins-backups"
+        mkdir -p "${backup_dir}"
+        backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
         mv "${dst}" "${backup}"
         echo "Antigravity: backed up existing ${dst} -> ${backup}"
       fi
@@ -100,7 +102,9 @@ install_antigravity() {
       if [[ -L "${dst}" ]]; then
         rm "${dst}"
       elif [[ -e "${dst}" ]]; then
-        backup="${dst}.bak.$(date +%Y%m%d-%H%M%S)"
+        backup_dir="${HOME}/.cache/ai-plugins-backups"
+        mkdir -p "${backup_dir}"
+        backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
         mv "${dst}" "${backup}"
         echo "Antigravity: backed up existing ${dst} -> ${backup}"
       fi
