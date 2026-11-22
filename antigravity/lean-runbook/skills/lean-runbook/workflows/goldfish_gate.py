@@ -1,21 +1,40 @@
 """Stage 2: 2-Pass Parallel Goldfish Spec Gate via Antigravity run_workflow.
 
 Runs TWO fresh-context Goldfish reviewers in parallel with ZERO prior drafting history:
-  1. Clarity & Structure Reviewer (model="flash"): ambiguity, missing CUJs, scope creep, line budget.
-  2. Adversarial Codebase Critic (model="pro"): verifies every claimed file/function/invariant against
-     real repo code, hunts contradictions, edge-case breaks, and unverified assumptions.
+  1. Clarity & Structure Reviewer (default clarity_model="flash"): ambiguity, missing CUJs, scope creep, line budget.
+  2. Adversarial Codebase Critic (default adversarial_model="inherit"): verifies every claimed file/function/invariant
+     against real repo code, hunts contradictions, edge-case breaks, and unverified assumptions.
+     Using "inherit" keeps the adversarial pass on the calling Swarm worker's model pool (e.g. Claude Sonnet or
+     Gemini 4 Argon) instead of forcing extra Gemini Models usage; pass "pro" explicitly if desired.
+
+Note: When orchestrating from a main chat on Gemini Models, prefer spawning two read-only `swarm` workers
+(`goldfish-clarity` on `gemini-3.8-flash-medium` + `goldfish-critic` on `gemini-4-argon-medium` or
+`claude-opus-5-5-medium`) per `references/quota-routing.md` to balance across all 3 quota pools.
 
 Args expected (pass via run_workflow Args dict):
-  slug:      Feature slug (e.g. "example-feature")
-  spec_path: Path to compact EGM spec (e.g. "docs/specs/example-feature.md")
-  rigor:     Optional short list of project rigor rules (string)
+  slug:              Feature slug (e.g. "example-feature")
+  spec_path:         Path to compact EGM spec (e.g. "docs/specs/example-feature.md")
+  rigor:             Optional short list of project rigor rules (string)
+  clarity_model:     Optional run_workflow tier ("inherit"|"flash_lite"|"flash"|"pro", default: "flash")
+  adversarial_model: Optional run_workflow tier ("inherit"|"flash_lite"|"flash"|"pro", default: "inherit")
 """
 import json
 import os
 
+VALID_TIERS = {"inherit", "flash_lite", "flash", "pro"}
+
 slug = args["slug"]
 spec_path = args["spec_path"]
 rigor = args.get("rigor", "No hardcoded config/magic numbers; real classes in tests; clean quiet gate.")
+clarity_model = args.get("clarity_model", "flash")
+adversarial_model = args.get("adversarial_model", "inherit")
+
+for arg_name, tier in (("clarity_model", clarity_model), ("adversarial_model", adversarial_model)):
+    if tier not in VALID_TIERS:
+        raise ValueError(
+            f"Invalid {arg_name}={tier!r} for run_workflow (allowed: {sorted(VALID_TIERS)}). "
+            "For exact Claude/GPT/Argon model IDs, dispatch native `swarm` workers instead."
+        )
 
 FINDINGS_SCHEMA = {
     "type": "object",
@@ -50,7 +69,9 @@ Read `{spec_path}` in full (do not modify any files). Check:
 2. Are Decisions & Invariants unambiguous, testable, and free of internal contradictions?
 3. Does every CUJ & Edge Case have a concrete Given/When/Then outcome?
 4. Are Out-of-Scope boundaries sharp enough to prevent creep?
-5. Is the slice small enough (<=3 commits, <=600 LOC)?
+5. Vertical-slice sizing: Does this truly fit <=3 commits / <=600 LOC and <=2 tightly coupled layers?
+   If it exceeds those bounds or bundles >=3 independently testable layers (e.g., data/state + gameplay logic + UI/HUD + persistence),
+   flag it as a `blocker` and propose a concrete 2-4 sequential vertical-slice split in `question_or_fix`.
 Skip cosmetic prose nits. Return ONLY real clarity/completeness gaps via finish()."""
 
 adversarial_prompt = f"""You are a fresh-context Adversarial Goldfish Technical Critic.
@@ -66,8 +87,8 @@ Check specifically:
 Report only verified, concrete findings via finish()."""
 
 review_specs = [
-    ("Goldfish Clarity (Flash)", "flash", "research", clarity_prompt),
-    ("Goldfish Adversarial Critic (Pro)", "pro", "research", adversarial_prompt),
+    (f"Goldfish Clarity ({clarity_model})", clarity_model, "research", clarity_prompt),
+    (f"Goldfish Adversarial Critic ({adversarial_model})", adversarial_model, "research", adversarial_prompt),
 ]
 
 clarity_res, adv_res = await parallel(
@@ -94,8 +115,8 @@ all_minor = [f for f in clarity_res["findings"] + adv_res["findings"] if f["seve
 lines = [
     f"# Goldfish Gate Report: {slug}",
     f"- **Spec:** `{spec_path}`",
-    f"- **Clarity (Flash):** {clarity_res['verdict']} — {clarity_res['summary']}",
-    f"- **Adversarial (Pro):** {adv_res['verdict']} — {adv_res['summary']}",
+    f"- **Clarity ({clarity_model}):** {clarity_res['verdict']} — {clarity_res['summary']}",
+    f"- **Adversarial ({adversarial_model}):** {adv_res['verdict']} — {adv_res['summary']}",
     f"- **Totals:** {len(all_blockers)} blocker · {len(all_important)} important · {len(all_minor)} minor",
     "",
 ]
@@ -110,8 +131,8 @@ def append_section(title, items):
         )
     lines.append("")
 
-append_section("Pass 1: Clarity & Structure (Flash)", clarity_res["findings"])
-append_section("Pass 2: Adversarial Codebase Verification (Pro)", adv_res["findings"])
+append_section(f"Pass 1: Clarity & Structure ({clarity_model})", clarity_res["findings"])
+append_section(f"Pass 2: Adversarial Codebase Verification ({adversarial_model})", adv_res["findings"])
 
 with open(report_path, "w", encoding="utf-8") as fh:
     fh.write("\n".join(lines))

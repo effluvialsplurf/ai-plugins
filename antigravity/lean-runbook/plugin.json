@@ -1,8 +1,8 @@
 {
   "name": "lean-runbook",
   "displayName": "Lean Runbook",
-  "version": "0.1.0",
-  "description": "Token-efficient 5-stage EGM + Build-Loop workflow for Antigravity 2.0 with compact specs, 2-pass Goldfish gate, contract plans, and Python run_workflow build loops.",
+  "version": "0.3.0",
+  "description": "Token-efficient, 3-pool quota-balanced design & build workflow for Antigravity 2.0: includes lean-design (full EGM replacement with 15-20m read-time budgets and 3-doc handoff) and lean-runbook (5-stage vertical-slice & epic TDD build loop via native swarm).",
   "author": {
     "name": "effluvialsplurf",
     "url": "https://github.com/effluvialsplurf"

@@ -9,8 +9,8 @@ Stages:
   5. review    Fresh Adversarial Whole-Branch Diff Review + PR & finish
 
 CLI subcommands:
-  start <slug> [--force] [--cwd <repo>]
-  status [--cwd <repo>]
+  start <slug> [--epic <epic-slug>] [--force] [--cwd <repo>]
+  status [--all | --epic <epic-slug>] [--cwd <repo>]
   done <stage> [--reason "..."] [--cwd <repo>]
   skip gate --reason "..." [--cwd <repo>]
   finish [--cwd <repo>]
@@ -126,10 +126,10 @@ def next_guidance(state: dict[str, Any]) -> str:
     slug = state.get("slug", "<slug>")
     return {
         "spec": f"Write compact EGM spec at docs/specs/{slug}.md (<=300 lines), then mark spec done.",
-        "goldfish": f"Run workflows/goldfish_gate.py on docs/specs/{slug}.md, resolve findings with user, then run `done goldfish` to open the code gate.",
-        "plan": f"Draft single <=300-line contract plan at .loop/{slug}/plan.md (<=3 commits, read-only planner, no scratch dry-runs).",
-        "build": f"Run workflows/build_loop.py (or /teamwork cross-family mode) over .loop/{slug}/plan.md with quiet test gate.",
-        "review": f"Complete fresh adversarial whole-branch diff review + fix pass, then run `finish`.",
+        "goldfish": f"Run 2-pass parallel Goldfish review via native `swarm` (Flash + Argon/Claude) or workflows/goldfish_gate.py on docs/specs/{slug}.md, resolve findings with user, then run `done goldfish` to open the code gate.",
+        "plan": f"Draft single <=300-line contract plan at .loop/{slug}/plan.md (<=3 commits, read-only Argon/Claude planner, no scratch dry-runs).",
+        "build": f"Implement via native `swarm` builder (Claude Sonnet / Argon) + optional workflows/build_loop.py (build_model='inherit', skip_critic=True) with quiet test gate. Never use /teamwork.",
+        "review": f"Run fresh cross-family adversarial whole-branch diff review via native `swarm` critic (opposite flagship pool) + fix pass, then run `finish`.",
         "done": f"Feature {slug} is complete. Run `finish` to clear active state.",
     }.get(st, "")
 
@@ -137,8 +137,9 @@ def next_guidance(state: dict[str, Any]) -> str:
 def format_status(state: dict[str, Any]) -> str:
     idx, st = current_stage(state)
     gate = "CLOSED (no code edits)" if gate_is_closed(state) else "OPEN"
+    epic_tag = f" [epic: {state['epic']}]" if state.get("epic") else ""
     lines = [
-        f"lean-runbook: {state['slug']} | Stage {idx}/{len(STAGES)} ({st}) | Gate: {gate}",
+        f"lean-runbook: {state['slug']}{epic_tag} | Stage {idx}/{len(STAGES)} ({st}) | Gate: {gate}",
         f"Spec: docs/specs/{state['slug']}.md | Plan: .loop/{state['slug']}/plan.md",
         f"Done: {', '.join(state.get('done', [])) or 'none'}",
         f"Next: {next_guidance(state)}",
@@ -148,15 +149,55 @@ def format_status(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def sanitize_slug(raw: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", raw.strip()).strip("-").lower()
+
+
+def iter_active_states(epic_filter: str | None = None) -> list[dict[str, Any]]:
+    repos_dir = data_root() / "repos"
+    if not repos_dir.is_dir():
+        return []
+    found: list[dict[str, Any]] = []
+    for p in sorted(repos_dir.glob("*/state.json")):
+        try:
+            st = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not st or not st.get("active"):
+            continue
+        if epic_filter and st.get("epic") != epic_filter:
+            continue
+        found.append(st)
+    found.sort(key=lambda s: (s.get("epic") or "", s.get("slug") or "", s.get("repo") or ""))
+    return found
+
+
 # ---------------- CLI Commands ----------------
 
 def cmd_start(args: list[str], cwd: str | None) -> int:
-    force = "--force" in args
-    pos = [a for a in args if not a.startswith("--")]
+    force = False
+    epic = ""
+    pos: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--force":
+            force = True
+            i += 1
+        elif args[i] == "--epic" and i + 1 < len(args):
+            epic = sanitize_slug(args[i + 1])
+            i += 2
+        elif args[i].startswith("--epic="):
+            epic = sanitize_slug(args[i].split("=", 1)[1])
+            i += 1
+        elif args[i].startswith("--"):
+            i += 1
+        else:
+            pos.append(args[i])
+            i += 1
     if not pos:
-        print("Usage: runbook.py start <slug> [--force]", file=sys.stderr)
+        print("Usage: runbook.py start <slug> [--epic <epic-slug>] [--force]", file=sys.stderr)
         return 2
-    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", pos[0].strip()).strip("-").lower()
+    slug = sanitize_slug(pos[0])
     repo = repo_root_for(cwd)
     existing = load_state(repo)
     if existing and existing.get("active") and not force:
@@ -167,7 +208,7 @@ def cmd_start(args: list[str], cwd: str | None) -> int:
         )
         return 1
     overrides = existing.get("overrides", []) if existing else []
-    state = {
+    state: dict[str, Any] = {
         "slug": slug,
         "repo": str(repo),
         "active": True,
@@ -177,12 +218,52 @@ def cmd_start(args: list[str], cwd: str | None) -> int:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    if epic:
+        state["epic"] = epic
     save_state(repo, state)
     print(format_status(state))
     return 0
 
 
-def cmd_status(cwd: str | None) -> int:
+def cmd_status(args: list[str], cwd: str | None) -> int:
+    show_all = False
+    epic_filter = ""
+    i = 0
+    while i < len(args):
+        if args[i] == "--all":
+            show_all = True
+            i += 1
+        elif args[i] == "--epic" and i + 1 < len(args):
+            epic_filter = sanitize_slug(args[i + 1])
+            show_all = True
+            i += 2
+        elif args[i].startswith("--epic="):
+            epic_filter = sanitize_slug(args[i].split("=", 1)[1])
+            show_all = True
+            i += 1
+        else:
+            i += 1
+
+    if show_all:
+        states = iter_active_states(epic_filter or None)
+        if not states:
+            label = f" for epic '{epic_filter}'" if epic_filter else ""
+            print(f"lean-runbook: no active slices{label}.")
+            return 0
+        header = f"lean-runbook active slices ({len(states)})"
+        if epic_filter:
+            header += f" [epic: {epic_filter}]"
+        lines = [header]
+        for st in states:
+            idx, stage = current_stage(st)
+            gate = "CLOSED" if gate_is_closed(st) else "OPEN"
+            ep = f" [epic: {st['epic']}]" if st.get("epic") else ""
+            lines.append(
+                f"- {st['slug']}{ep} | Stage {idx}/{len(STAGES)} ({stage}) | Gate: {gate} | {st.get('repo', '?')}"
+            )
+        print("\n".join(lines))
+        return 0
+
     repo = repo_root_for(cwd)
     state = load_state(repo)
     if not state or not state.get("active"):
@@ -356,8 +437,9 @@ def hook_session_start() -> int:
             return 0
         idx, st = current_stage(state)
         gate = "CLOSED" if gate_is_closed(state) else "OPEN"
+        epic_tag = f" [epic: {state['epic']}]" if state.get("epic") else ""
         msg = (
-            f"lean-runbook active: {state['slug']} | Stage {idx}/{len(STAGES)} ({st}) "
+            f"lean-runbook active: {state['slug']}{epic_tag} | Stage {idx}/{len(STAGES)} ({st}) "
             f"| Gate: {gate} | Next: {next_guidance(state)}"
         )
         print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}))
@@ -501,7 +583,7 @@ def main(argv: list[str]) -> int:
     if cmd == "start":
         return cmd_start(rest, cwd)
     if cmd == "status":
-        return cmd_status(cwd)
+        return cmd_status(rest, cwd)
     if cmd == "done":
         return cmd_done(rest, cwd)
     if cmd == "skip":

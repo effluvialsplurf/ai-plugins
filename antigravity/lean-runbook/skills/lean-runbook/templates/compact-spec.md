@@ -4,6 +4,7 @@
 - **Date:** `<YYYY-MM-DD>`
 - **Status:** Draft | Goldfish-Reviewed | Approved | Implemented
 - **Slice Scope:** ≤3 commits, ≤600 LOC (split larger overhauls into sequential slices)
+- **Parent Feature / Roadmap:** `standalone` (or `Slice X of Y: <slug-1> -> <slug-2> -> <slug-3>`)
 
 ## 1. Objective & Boundaries
 - **Goal (1–2 sentences):** What changes for the user and why.

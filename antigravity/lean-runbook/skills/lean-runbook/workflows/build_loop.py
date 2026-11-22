@@ -10,13 +10,18 @@ Args expected (pass via run_workflow Args dict):
   gate_cmd:     Full quiet gate command (default: "tools/gate.sh")
   fast_cmd:     Fast inner-loop gate command (default: "tools/gate.sh --fast")
   base_ref:     Git base ref for branch diff review (default: "main")
-  build_model:  Builder tier ("inherit" | "flash" | "pro", default: "inherit")
-  critic_model: Reviewer tier (default: "pro")
+  build_model:  Builder tier ("inherit" | "flash_lite" | "flash" | "pro", default: "inherit")
+                When invoked inside a Claude/Argon Swarm Slice Worker, keep "inherit" so builds stay on that pool.
+  critic_model: Reviewer tier (default: "inherit"; ignored when skip_critic=True)
+  skip_critic:  Bool (default: False). Set True when the Coordinator runs Stage 5 via a dedicated
+                cross-family native `swarm` critic (avoids paying twice for single-family review).
   tasks:        List of dicts: [{"id": "c1", "title": "...", "commit_msg": "...", "fast_only": False}]
                 (Hard cap: <= 3 commits per vertical slice)
 """
 import json
 import os
+
+VALID_TIERS = {"inherit", "flash_lite", "flash", "pro"}
 
 slug = args["slug"]
 spec_path = args["spec_path"]
@@ -25,8 +30,16 @@ gate_cmd = args.get("gate_cmd", "tools/gate.sh")
 fast_cmd = args.get("fast_cmd", "tools/gate.sh --fast")
 base_ref = args.get("base_ref", "main")
 build_model = args.get("build_model", "inherit")
-critic_model = args.get("critic_model", "pro")
+critic_model = args.get("critic_model", "inherit")
+skip_critic = bool(args.get("skip_critic", False))
 tasks = args["tasks"]
+
+for arg_name, tier in (("build_model", build_model), ("critic_model", critic_model)):
+    if tier not in VALID_TIERS:
+        raise ValueError(
+            f"Invalid {arg_name}={tier!r} for run_workflow (allowed: {sorted(VALID_TIERS)}). "
+            "For exact Claude/GPT/Argon model IDs, dispatch native `swarm` workers instead."
+        )
 
 if len(tasks) > 3:
     raise ValueError(
@@ -155,15 +168,26 @@ if not full_ok:
     raise RuntimeError(f"Full quiet gate failed before branch review:\n{full_out[-2000:]}")
 log("Full quiet gate PASS before branch review")
 
-# Stage 5: 1 Fresh Adversarial Whole-Branch Critic
-phase("stage-5-adversarial-branch-review")
-diff_stat = await call_tool(
-    "run_command",
-    CommandLine=f"git diff --stat {base_ref}...HEAD",
-    toolSummary="Branch diff summary",
-    WaitMsBeforeAsync=5000,
-)
-critic_prompt = f"""You are a fresh-context Adversarial Whole-Branch Code Reviewer.
+if skip_critic:
+    log("Skipping in-workflow critic (skip_critic=True) — Stage 5 handled by cross-family Swarm Critic")
+    print(json.dumps({
+        "slug": slug,
+        "commits_built": len(build_results),
+        "review_verdict": "DEFERRED_TO_SWARM_CRITIC",
+        "review_report": None,
+        "actionable_findings_fixed": 0,
+        "fix_commit": None,
+    }, indent=2))
+else:
+    # Stage 5: 1 Fresh Adversarial Whole-Branch Critic
+    phase("stage-5-adversarial-branch-review")
+    diff_stat = await call_tool(
+        "run_command",
+        CommandLine=f"git diff --stat {base_ref}...HEAD",
+        toolSummary="Branch diff summary",
+        WaitMsBeforeAsync=5000,
+    )
+    critic_prompt = f"""You are a fresh-context Adversarial Whole-Branch Code Reviewer.
 Your job is to find REAL bugs, missing edge-case tests, and spec/rigor violations — never style nits.
 Review the diff `{base_ref}...HEAD` against `{spec_path}` and repo rigor rules (`CLAUDE.md` / `.loop/PROJECT.md` if present).
 Diff summary:
@@ -175,60 +199,60 @@ Instructions:
    hardcoded configuration/magic numbers, and stale docs.
 3. Do NOT edit any code. Return structured findings via finish()."""
 
-review = await agent(
-    prompt=critic_prompt,
-    role="Adversarial Branch Critic",
-    model=critic_model,
-    type_name="research",
-    workspace="inherit",
-    schema=REVIEW_SCHEMA,
-)
-
-# Save review report
-out_dir = os.path.join(".loop", slug)
-os.makedirs(out_dir, exist_ok=True)
-review_path = os.path.join(out_dir, "branch-review.md")
-rev_lines = [
-    f"# Whole-Branch Review: {slug}",
-    f"- **Verdict:** {review['verdict']} — {review['summary']}",
-    "",
-]
-for f in review["findings"]:
-    rev_lines.append(
-        f"- **[{f['severity'].upper()} / {f['kind']}] {f['id']}** (`{f['location']}`): {f['what']} -> *{f['fix']}*"
+    review = await agent(
+        prompt=critic_prompt,
+        role="Adversarial Branch Critic",
+        model=critic_model,
+        type_name="research",
+        workspace="inherit",
+        schema=REVIEW_SCHEMA,
     )
-with open(review_path, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(rev_lines) + "\n")
 
-actionable = [f for f in review["findings"] if f["severity"] in ("blocker", "high")]
-fix_res = None
-if actionable:
-    phase("stage-5-review-fix-pass")
-    log(f"Branch Critic found {len(actionable)} blocker/high findings — dispatching 1 fixer pass")
-    findings_txt = "\n".join(
-        f"- [{f['severity'].upper()}] {f['id']} ({f['location']}): {f['what']} | Fix: {f['fix']}"
-        for f in actionable
-    )
-    fix_res = await agent(
-        prompt=f"""Fix all blocker/high findings from whole-branch review, add regression tests, run `{gate_cmd}`, and commit as `fix: branch review findings for {slug}`.
+    # Save review report
+    out_dir = os.path.join(".loop", slug)
+    os.makedirs(out_dir, exist_ok=True)
+    review_path = os.path.join(out_dir, "branch-review.md")
+    rev_lines = [
+        f"# Whole-Branch Review: {slug}",
+        f"- **Verdict:** {review['verdict']} — {review['summary']}",
+        "",
+    ]
+    for f in review["findings"]:
+        rev_lines.append(
+            f"- **[{f['severity'].upper()} / {f['kind']}] {f['id']}** (`{f['location']}`): {f['what']} -> *{f['fix']}*"
+        )
+    with open(review_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(rev_lines) + "\n")
+
+    actionable = [f for f in review["findings"] if f["severity"] in ("blocker", "high")]
+    fix_res = None
+    if actionable:
+        phase("stage-5-review-fix-pass")
+        log(f"Branch Critic found {len(actionable)} blocker/high findings — dispatching 1 fixer pass")
+        findings_txt = "\n".join(
+            f"- [{f['severity'].upper()}] {f['id']} ({f['location']}): {f['what']} | Fix: {f['fix']}"
+            for f in actionable
+        )
+        fix_res = await agent(
+            prompt=f"""Fix all blocker/high findings from whole-branch review, add regression tests, run `{gate_cmd}`, and commit as `fix: branch review findings for {slug}`.
 Findings:
 {findings_txt}""",
-        role="Review Fixer",
-        model=build_model,
-        type_name="self",
-        workspace="inherit",
-        schema=BUILD_SCHEMA,
-    )
-    final_ok, final_out = await run_quiet_gate(gate_cmd, "Final quiet gate after review fixes")
-    if not final_ok:
-        raise RuntimeError(f"Final quiet gate failed after review fixes:\n{final_out[-1500:]}")
-    log("Final quiet gate PASS after review fixes")
+            role="Review Fixer",
+            model=build_model,
+            type_name="self",
+            workspace="inherit",
+            schema=BUILD_SCHEMA,
+        )
+        final_ok, final_out = await run_quiet_gate(gate_cmd, "Final quiet gate after review fixes")
+        if not final_ok:
+            raise RuntimeError(f"Final quiet gate failed after review fixes:\n{final_out[-1500:]}")
+        log("Final quiet gate PASS after review fixes")
 
-print(json.dumps({
-    "slug": slug,
-    "commits_built": len(build_results),
-    "review_verdict": review["verdict"],
-    "review_report": review_path,
-    "actionable_findings_fixed": len(actionable),
-    "fix_commit": fix_res.get("commit_sha") if fix_res else None,
-}, indent=2))
+    print(json.dumps({
+        "slug": slug,
+        "commits_built": len(build_results),
+        "review_verdict": review["verdict"],
+        "review_report": review_path,
+        "actionable_findings_fixed": len(actionable),
+        "fix_commit": fix_res.get("commit_sha") if fix_res else None,
+    }, indent=2))

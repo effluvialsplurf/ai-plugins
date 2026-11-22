@@ -137,6 +137,77 @@ class LeanRunbookTests(unittest.TestCase):
         self.assertEqual(r3.returncode, 0)
         self.assertEqual(self.run_hook("hook-session-start", {"cwd": str(self.repo)}), {})
 
+    def test_epic_parallel_worktrees_have_isolated_gates_and_aggregate_status(self) -> None:
+        # Need an initial commit before adding git worktrees
+        (self.repo / "README.md").write_text("init\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "README.md"], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(self.repo),
+                "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "-q", "-m", "init",
+            ],
+            check=True,
+        )
+
+        wt_a = Path(self.tmp.name) / "wt-stage-schema"
+        wt_b = Path(self.tmp.name) / "wt-stage-hud"
+        subprocess.run(
+            ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "slice/stage-schema", str(wt_a)],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "slice/stage-hud", str(wt_b)],
+            check=True,
+        )
+
+        # Start two slices under the same epic in two separate share worktrees
+        ra = subprocess.run(
+            [sys.executable, str(RUNBOOK), "--cwd", str(wt_a), "start", "stage-schema", "--epic", "progression-system"],
+            env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(ra.returncode, 0, ra.stderr)
+        self.assertIn("[epic: progression-system]", ra.stdout)
+
+        rb = subprocess.run(
+            [sys.executable, str(RUNBOOK), "--cwd", str(wt_b), "start", "stage-hud", "--epic", "progression-system"],
+            env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(rb.returncode, 0, rb.stderr)
+
+        # Open gate ONLY in worktree A; worktree B must remain CLOSED
+        r_open = subprocess.run(
+            [sys.executable, str(RUNBOOK), "--cwd", str(wt_a), "done", "goldfish"],
+            env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(r_open.returncode, 0, r_open.stderr)
+
+        pw_a = self.run_hook("hook-pre-write", {
+            "cwd": str(wt_a),
+            "toolCall": {"name": "edit_file", "args": {"Path": str(wt_a / "stage.gd")}},
+        })
+        self.assertEqual(pw_a["decision"], "allow")
+
+        pw_b = self.run_hook("hook-pre-write", {
+            "cwd": str(wt_b),
+            "toolCall": {"name": "edit_file", "args": {"Path": str(wt_b / "hud.gd")}},
+        })
+        self.assertEqual(pw_b["decision"], "deny")
+
+        # Main coordinator repo (no active slice) stays unblocked and can inspect all slices
+        r_all = self.run_cli("status", "--epic", "progression-system")
+        self.assertEqual(r_all.returncode, 0, r_all.stderr)
+        self.assertIn("active slices (2)", r_all.stdout)
+        self.assertIn("stage-schema", r_all.stdout)
+        self.assertIn("Gate: OPEN", r_all.stdout)
+        self.assertIn("stage-hud", r_all.stdout)
+        self.assertIn("Gate: CLOSED", r_all.stdout)
+
+        # Filtering by a different epic shows none
+        r_other = self.run_cli("status", "--epic", "other-epic")
+        self.assertEqual(r_other.returncode, 0, r_other.stderr)
+        self.assertIn("no active slices for epic 'other-epic'", r_other.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
