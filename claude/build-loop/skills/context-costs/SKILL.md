@@ -5,7 +5,13 @@ description: Use when dispatching subagents, resuming an agent, running a long C
 
 # Context and cache costs
 
-Practical rules for any workflow where Claude Code calls tools many times or delegates work to subagents.
+Practical rules for any workflow where an AI coding harness calls tools many times or delegates work to subagents.
+
+> **Harness & model portability:** The core formula (`cost ≈ calls × average context`) and Rules 1–12 apply to **every**
+> model family and harness (Claude, Gemini, OpenAI/GPT, open-weights/local). The 5-minute vs. 1-hour cache TTL notes and
+> the `scripts/loop_ledger.py` / `scripts/context_breakdown.py` transcript scripts below are Claude Code / Anthropic
+> specific — on other providers, map them to your provider's prefix/context caching (e.g., OpenAI automatic prefix
+> caching, Gemini implicit/explicit context caching, or local KV-cache reuse) and your harness's usage logs.
 
 ## The one formula
 

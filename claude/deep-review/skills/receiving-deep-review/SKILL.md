@@ -15,9 +15,12 @@ findings come from sub-agents that produce false positives (that's why each carr
 confirmed work through the normal planning flow. **Never implement-and-commit straight
 from the report.**
 
-**REQUIRED SUB-SKILL:** Use superpowers:receiving-code-review for the evaluation
-discipline (verify before accepting, push back with technical reasoning, no performative
-agreement). This skill adds the deep-review artifact handling around it.
+**REQUIRED SUB-SKILL (or standalone discipline):** In Claude Code with `superpowers`,
+use `superpowers:receiving-code-review` for evaluation discipline. Outside Claude Code
+(or without `superpowers`), apply the same discipline directly: verify every finding
+against live code before accepting it, push back with technical evidence on false
+positives, and avoid performative agreement. This skill adds the deep-review artifact
+handling around it.
 
 ## When to Use
 
@@ -120,7 +123,11 @@ digraph route {
 
 The two non-default routes must clear a bar; **if neither bar passes, /writing-plans.**
 This puts the *changes themselves* through plan → review → executing-plans before code
-lands. A CONFIRMED `mechanical` batch normally clears the trivial bar (each item is
+lands. *(Outside Claude Code or without `superpowers`, substitute your harness's
+equivalent: write an explicit implementation plan — e.g., `docs/plans/<slug>.md` or a
+`lean-runbook` contract plan — and get user approval before coding; use your normal
+design/brainstorm flow when the approach is unclear.)* A CONFIRMED `mechanical` batch
+normally clears the trivial bar (each item is
 small, self-contained, fix fully stated) — implement it directly under
 receiving-code-review discipline; `judgment` work rarely does and defaults to
 /writing-plans. Mixed set: knock out the trivial items directly, route the rest; bias

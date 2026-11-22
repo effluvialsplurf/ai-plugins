@@ -9,7 +9,7 @@ Three-axis code-quality review of a diff. Each axis is an isolated sub-agent dri
 a single rubric module; findings merge into one severity-ranked report written to
 `docs/reviews/`, with an advisory verdict and optional user-curated PR comments.
 
-**Security is NOT covered here — run `/security-review` for that.**
+**Security is NOT covered here — run `/security-review` (or your dedicated security review) for that.**
 
 This skill is DRY by construction: review dimensions live ONLY in the rubric modules
 under `references/`. This file contains process, never dimensions.
@@ -50,10 +50,22 @@ under `references/`. This file contains process, never dimensions.
 
 ### 3. Fan out one sub-agent per requested axis (parallel)
 
-Send a single message with one `Agent` call per requested axis, with `subagent_type`
-`deep-review:axis-reviewer`. It carries only the tools a review needs, so it starts at a
-fraction of a general-purpose agent's context. Fall back to general-purpose only if that
-agent type is unavailable. Give each sub-agent:
+Dispatch one fresh, read-only reviewer per requested axis:
+
+- **Claude Code:** Send a single message with one `Agent` call per requested axis, with
+  `subagent_type` `deep-review:axis-reviewer` (it carries only the tools a review needs,
+  starting at a fraction of a general-purpose agent's context; fall back to
+  general-purpose only if that agent type is unavailable).
+- **Other harnesses (Antigravity, Codex CLI, Gemini CLI, Cursor, OpenCode, etc.):**
+  Spawn one fresh read-only subagent/worker per requested axis in parallel using your
+  harness's native mechanism (e.g., Antigravity `swarm` or `invoke_subagent`, or
+  whatever subagent tool is available). For cross-vendor review, pin the reviewers to a
+  different model family than the author.
+- **Single-agent harnesses (no subagent tool):** Run each requested axis sequentially as
+  an isolated pass, reading only that axis's rubric module during its pass before
+  aggregating in Step 4.
+
+Give each axis reviewer:
 
 - the `DIFF`, `FILES`, and `COMMITS`;
 - the path to its rubric module — `references/<axis>.md`, relative to THIS skill's own
@@ -115,12 +127,12 @@ Print, in order:
 - The `## Needs your attention` findings **verbatim and in full** (`F-id`, severity,
   location, `what`, `why`, `suggested_fix`) — this is the part the human actually
   reads; if the section is empty, say `Nothing needs your attention.` explicitly.
-- One line of counts for the rest: `N mechanical (Claude-handleable) · N noted ·
+- One line of counts for the rest: `N mechanical (agent-handleable) · N noted ·
   N clean checks`.
 - The verdict, the path to the review file, and which testing tier ran.
 - This footer verbatim:
 
-`Security not assessed here — run /security-review for that.`
+`Security not assessed here — run /security-review (or your dedicated security review) for that.`
 
 ### 7. PR comments (only with `--comment`)
 

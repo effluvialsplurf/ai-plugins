@@ -62,7 +62,7 @@ attention**, not axis — the contract is: the human reads section 3 and can sto
 3. `## Needs your attention` — FULL finding blocks for: every `judgment` finding
    (any axis, any severity), plus every **correctness** finding MEDIUM or above
    (logic errors get human eyes even when the fix is mechanical).
-4. `## Mechanical (Claude-handleable)` — one compact table row per remaining
+4. `## Mechanical (agent-handleable)` *(legacy reports may title this `Mechanical (Claude-handleable)`)* — one compact table row per remaining
    worth-fixing `mechanical` finding:
    `F-id · severity · location · what (one line) · fix (one line)`.
 5. `## Noted, no action` — one line per `defensible` finding, any axis:

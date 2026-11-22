@@ -77,6 +77,12 @@ The status line process has no `CLAUDE_PLUGIN_DATA`, so every hook run leaves a 
 
 From the marketplace: `/plugin install egm-runbook@ai-plugins`. To try a checkout without installing: `claude --plugin-dir claude/egm-runbook`. Requires Python 3.9+; standard library only.
 
+## Portability & Other Harnesses
+
+- **Portable core:** `scripts/runbook.py` CLI (`start`, `status`, `next`, `record`, `done`, `skip`, `switch`, `finish`) is pure Python 3.9+ stdlib and can be run from any shell with `--data-dir <path>`.
+- **Claude Code native (requires conversion elsewhere):** `hooks/hooks.json` (`SessionStart`, `UserPromptSubmit`, `PreToolUse` on `Write|Edit|MultiEdit|NotebookEdit|Skill|Bash`), the `!` user-shell override model, `scripts/statusline`, and the hardcoded `/egm:*` and `superpowers:*` step/skill names.
+- **Alternatives & conversion:** On Antigravity 2.0, use [`antigravity/lean-runbook`](../../antigravity/lean-runbook) (which replaces EGM + `egm-runbook` natively). To adapt `egm-runbook` to another harness or model family, see [`docs/PORTABILITY.md`](../../docs/PORTABILITY.md) and [`docs/CONVERSION-PROMPTS.md`](../../docs/CONVERSION-PROMPTS.md).
+
 ## Tests
 
 `python3 -m unittest discover -s claude/egm-runbook/scripts/tests` from the repo root.

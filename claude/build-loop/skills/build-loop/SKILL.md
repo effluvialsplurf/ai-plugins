@@ -32,6 +32,7 @@ before the first build; it applies to any work with subagents, not only this loo
    | Claude Code only | Claude only | `references/version-claude-only.md` |
    | Claude Code + Kiro | Claude + Kiro | `references/version-claude-kiro.md` |
    | Claude Code + Codex (Kiro optional) | Claude + Codex | `references/version-claude-codex.md` |
+   | Any other harness or model family (Gemini, OpenAI/Codex, Open-Weights, Cursor, OpenCode, Antigravity) | Custom / Agnostic | `references/version-custom-harness.md` |
 
 2. **Make `.loop/` in the repo root** and add it to `.git/info/exclude` (or `.gitignore` if the team wants it).
    - `.loop/SEATS.md`: copy the chosen version's seat table. It is the one place that says which model does each role,
@@ -121,7 +122,9 @@ code before it is built.
 | `scripts/codex-review.sh`, `scripts/codex-usage.sh` | Codex seats (Claude + Codex version) |
 | `scripts/loop_ledger.py`, `scripts/context_breakdown.py` | Cost by stage after every PR (see `build-loop:context-costs`) |
 
-Script arguments are in each script's header comment. Run them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`. Scripts that
+Script arguments are in each script's header comment. Run them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>` (outside Claude
+Code, replace `${CLAUDE_PLUGIN_ROOT}` with your local checkout path to `claude/build-loop`, and see
+`references/version-custom-harness.md` for harness/model substitutions). Scripts that
 keep state default to `.loop/` at the main checkout's root (shared by every worktree); set `LOOP_DIR` to move it.
 `codex-review.sh` takes the rubric as a file: pass the `deep-review` plugin's `references/correctness.md`.
 `stall-watch.sh` and `codex-usage.sh` need GNU `find`/`stat` (Linux or WSL; on macOS install coreutils and findutils).
