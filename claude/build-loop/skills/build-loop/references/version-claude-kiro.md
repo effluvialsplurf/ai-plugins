@@ -30,7 +30,7 @@ rather than running entire PRs end-to-end on it.
    the fresh Opus check and record what each finds in FINDINGS.md; if it finds nothing Opus didn't, stop paying for it.
 2. **Reserve when the Claude seat runs low.** Kiro runs Claude models on its own meter, so it finishes an in-flight PR
    without changing who builds and who reviews. Don't start the next plan; finish the current PR's build tasks and fix
-   rounds on Kiro (about 45 credits a task with its fix round), and stop there.
+   rounds on Kiro, and stop there.
 
 ## Where the review rule bends
 

@@ -5,7 +5,7 @@ description: >-
   "lean runbook status", "run the lean loop"). Enforces a <=300-line compact EGM spec, 2-pass parallel
   Goldfish gate (hook-enforced no-code before spec signoff), <=300-line contract plan (no full-code plans
   or scratch dry-runs), Python run_workflow TDD build loop with 1-line quiet gates, and fresh adversarial
-  whole-branch review with cross-family Google-plan model routing.
+  whole-branch review with cross-family model routing.
 ---
 
 # lean-runbook (Antigravity 2.0 Native)
@@ -44,8 +44,8 @@ Never keep the main orchestration window awake polling subagents or running test
 - **Stages 4–5:** Call `run_workflow` with `ScriptPath` set to `~/.gemini/config/plugins/lean-runbook/skills/lean-runbook/workflows/build_loop.py` and `Args: {"slug": "<slug>", "spec_path": "...", "plan_path": "...", "gate_cmd": "tools/gate.sh", "fast_cmd": "tools/gate.sh --fast", "tasks": [...]}`.
 - Every workflow agent returns a **strict JSON schema** (≤15-line handoff). Passing gates cost **0 LLM tokens**.
 
-### 3. Optional Cross-Family `/teamwork` Mode (Highest Accuracy Across Your 3 Google Quota Pools)
-When working on a high-risk vertical slice where you want **true cross-vendor verification** (and to spread load across your separate Gemini Fast-Reset, Claude Daily, and Gemini Argon Weekly pools), run Stages 4–5 via `/teamwork` (`swarm`):
+### 3. Optional Cross-Family `/teamwork` Mode
+When working on a high-risk vertical slice where you want **true cross-vendor verification** across separate model families/quotas, run Stages 4–5 via `/teamwork` (`swarm`):
 - **Coordinator:** `Orchestrator (Neon)` (or `Orchestrator (Argon)`) — thin controller, state in `.loop/<slug>/LOOP-STATE.md`.
 - **Scout:** `Gemini 3.8 Flash (Low)`.
 - **Builders (cap ≤3; use `workspace: "share"` only for disjoint files):** `Claude Sonnet 5.5 (Medium)` (or `Gemini 4 Neon (Medium)`).

@@ -12,7 +12,7 @@ questions; the loop does the rest and stops only for what the human must decide.
 Three ideas make it work:
 
 1. **The plan carries the code.** The planner writes complete code and tests into the plan; builders transcribe and
-   test. A trial with lighter plans halved planning cost, doubled fix rounds and let two real bugs through.
+   test. Lighter plans tend to reduce upfront planning cost at the expense of extra fix rounds and missed bugs.
 2. **Nothing is signed off by the model that produced it.** A different vendor is best, a different model next, a fresh
    adversarial context last (and that is an exception to name, not the rule met).
 3. **State lives in files, not in the conversation.** The controller can be compacted or restarted at any time and lose
