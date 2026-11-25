@@ -327,23 +327,23 @@ install_bin() {
       echo "Bin: source not executable: ${src}" >&2
       return 1
     fi
-    mkdir -p "${BIN_DEST}"
+    mkdir -p "${BIN_DEST}" || return 1
     dst="${BIN_DEST}/${name}"
-    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+    if [[ -L "${dst}" && "$(readlink -f "${dst}" 2>/dev/null || true)" == "${src}" ]]; then
       echo "Bin: ${name} already linked -> ${src}"
       installed=$((installed + 1))
       continue
     fi
     if [[ -L "${dst}" || -e "${dst}" ]]; then
       local backup_dir="${HOME}/.cache/ai-plugins-backups"
-      mkdir -p "${backup_dir}"
+      mkdir -p "${backup_dir}" || return 1
       local backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
-      mv "${dst}" "${backup}"
+      mv "${dst}" "${backup}" || return 1
       echo "Bin: backed up existing ${dst} -> ${backup}"
     fi
     # Always symlink, even under --copy: the launcher resolves the bundled
     # engine via Path(__file__).resolve().parents[1].
-    ln -s "${src}" "${dst}"
+    ln -s "${src}" "${dst}" || return 1
     echo "Bin: linked ${dst} -> ${src}"
     installed=$((installed + 1))
   done
@@ -362,7 +362,7 @@ uninstall_bin() {
     matches_filter "${name}" "${group}" || continue
     src="${REPO_DIR}/${rel}"
     dst="${BIN_DEST}/${name}"
-    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+    if [[ -L "${dst}" && "$(readlink -f "${dst}" 2>/dev/null || true)" == "${src}" ]]; then
       rm "${dst}"
       echo "Bin: removed symlink ${dst}"
     else
@@ -396,7 +396,7 @@ uninstall_antigravity() {
     name="$(basename "${src}")"
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
-    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+    if [[ -L "${dst}" && "$(readlink -f "${dst}" 2>/dev/null || true)" == "${src}" ]]; then
       rm "${dst}"
       echo "Antigravity: removed symlink ${dst}"
     else
@@ -558,7 +558,7 @@ uninstall_skills() {
     fi
     src="${REPO_DIR}/${rel}"
     dst="${dest}/${skill}"
-    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+    if [[ -L "${dst}" && "$(readlink -f "${dst}" 2>/dev/null || true)" == "${src}" ]]; then
       rm "${dst}"
       echo "Skills: removed symlink ${dst}"
     fi
