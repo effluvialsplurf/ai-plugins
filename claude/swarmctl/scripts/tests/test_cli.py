@@ -151,6 +151,12 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse(self.db_path.exists())
 
+        # Invalid init --max-concurrent 0 must fail BEFORE creating board.db
+        code, out, err = self._run_cli(["--repo", str(self.repo), "init", "--max-concurrent", "0"])
+        self.assertEqual(code, 1)
+        self.assertIn("max_concurrent", err)
+        self.assertFalse(self.db_path.exists())
+
         # Init now, then try invalid worker name UPPER
         self._run_cli(["--repo", str(self.repo), "init"])
         code, out, err = self._run_cli(
@@ -272,6 +278,29 @@ class TestCli(unittest.TestCase):
         )
         self.assertNotEqual(branch_res.returncode, 0)
 
+        # Duplicate add of an existing share worker must fail BEFORE touching or deleting its worktree
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "add", "wdup", "--brief", "first", "--workspace", "share", "--no-wake"]
+        )
+        self.assertEqual(code, 0, err)
+        wt_dup = self.swarm_dir / "worktrees" / "wdup"
+        (wt_dup / "preserve.txt").write_text("keep me\n", encoding="utf-8")
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "add", "wdup", "--brief", "second", "--workspace", "share", "--no-wake"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("already exists", err)
+        self.assertTrue((wt_dup / "preserve.txt").is_file())
+
+        # Killed worker with preserved dirty worktree + failing re-add preserves the dirty worktree
+        with SwarmStore(self.db_path) as store:
+            store.mark_killed("wdup")
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "add", "wdup", "--brief", "readd", "--workspace", "share", "--no-wake"]
+        )
+        self.assertEqual(code, 1)
+        self.assertTrue((wt_dup / "preserve.txt").is_file())
+
     def test_status_and_read_filters_and_seqs_validation(self) -> None:
         self._run_cli(["--repo", str(self.repo), "init"])
         self._run_cli(["--repo", str(self.repo), "add", "w1", "--brief", "b1", "--no-wake"])
@@ -333,7 +362,9 @@ class TestCli(unittest.TestCase):
         self.assertEqual(w1["model"], "sonnet")
         self.assertNotIn("worker_token", w1)
 
-        # Leading-dash model rejected
+        # Leading-dash model rejected both with and without -- separator (returns int 1)
+        code, _, err = self._run_cli(["--repo", str(self.repo), "model", "w1", "--bad"])
+        self.assertEqual(code, 1)
         code, _, err = self._run_cli(["--repo", str(self.repo), "model", "w1", "--", "--bad"])
         self.assertEqual(code, 1)
 
@@ -445,7 +476,7 @@ class TestCli(unittest.TestCase):
             assert w_pid_row is not None
             real_token = w_pid_row["worker_token"]
 
-        # Spawn a dummy sleeper WITHOUT the worker token -> must refuse to kill recycled PID
+        # Spawn a dummy sleeper WITHOUT the worker token -> must refuse to kill recycled PID and NOT wake supervisor
         sleeper_bad = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)"],
             start_new_session=True,
@@ -453,9 +484,11 @@ class TestCli(unittest.TestCase):
         try:
             with SwarmStore(self.db_path) as store:
                 store.set_worker_pid("wpid", sleeper_bad.pid)
-            code, _, err = self._run_cli(["--repo", str(self.repo), "kill", "wpid"])
-            self.assertEqual(code, 1)
-            self.assertIsNone(sleeper_bad.poll())
+            with patch("swarmctl.cli._wake_supervisor_best_effort") as mock_wake:
+                code, _, err = self._run_cli(["--repo", str(self.repo), "kill", "wpid"])
+                self.assertEqual(code, 1)
+                self.assertIsNone(sleeper_bad.poll())
+                mock_wake.assert_not_called()
         finally:
             os.killpg(sleeper_bad.pid, signal.SIGKILL)
             sleeper_bad.wait()
@@ -470,10 +503,12 @@ class TestCli(unittest.TestCase):
         try:
             with SwarmStore(self.db_path) as store:
                 store.set_worker_pid("wpid", sleeper_good.pid)
-            code, out, err = self._run_cli(["--repo", str(self.repo), "kill", "wpid", "--json"])
-            self.assertEqual(code, 0, err)
-            self.assertEqual(json.loads(out)["state"], "killed")
-            sleeper_good.wait(timeout=2.0)
+            with patch("swarmctl.cli._wake_supervisor_best_effort") as mock_wake2:
+                code, out, err = self._run_cli(["--repo", str(self.repo), "kill", "wpid", "--json"])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["state"], "killed")
+                sleeper_good.wait(timeout=2.0)
+                mock_wake2.assert_not_called()
         finally:
             if sleeper_good.poll() is None:
                 try:
@@ -507,6 +542,12 @@ class TestCli(unittest.TestCase):
         sub_dir.mkdir(parents=True)
         self.assertEqual(resolve_repo_root(None, cwd=sub_dir), self.repo)
 
+        # Nested standalone git repo inside an initialized parent directory uses its own repo root
+        nested_repo = self.repo / "subprojects" / "child_repo"
+        nested_repo.mkdir(parents=True)
+        _git(nested_repo, "init")
+        self.assertEqual(resolve_repo_root(None, cwd=nested_repo), nested_repo.resolve())
+
         worker_env = {
             "SWARMCTL_ROLE": "worker",
             "SWARMCTL_AGENT": "w1",
@@ -522,11 +563,30 @@ class TestCli(unittest.TestCase):
             self.assertEqual(w_msg["body"], "hello from w1")
             mock_sup.assert_not_called()
 
-        # Worker mode spoofing --as coordinator fails closed
+        # Worker mode spoofing --as coordinator, tokenless post --as w1, invalid token, and SWARMCTL_AGENT mismatch fail closed
         code, _, err = self._run_cli(
             ["post", "--as", "coordinator", "spoof"], env=worker_env, cwd=sub_dir
         )
         self.assertEqual(code, 1)
+        self.assertIn("Worker token belongs to 'w1'", err)
+
+        code, _, err = self._run_cli(["--repo", str(self.repo), "post", "--as", "w1", "--no-wake", "spoof"])
+        self.assertEqual(code, 1)
+        self.assertIn("requires a valid worker token", err)
+
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "post", "--token", "bad-token", "--no-wake", "spoof"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Invalid, revoked, or mismatched worker token", err)
+
+        code, _, err = self._run_cli(
+            ["post", "spoof"],
+            env={"SWARMCTL_ROLE": "worker", "SWARMCTL_AGENT": "w2", "SWARMCTL_WORKER_TOKEN": w1_token},
+            cwd=sub_dir,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Worker token belongs to 'w1'", err)
 
         # Worker mode missing token fails closed
         code, _, err = self._run_cli(
@@ -536,18 +596,63 @@ class TestCli(unittest.TestCase):
         )
         self.assertEqual(code, 1)
 
-        # Forbidden coordinator subcommands in worker mode fail closed
-        for forbidden_argv in (
-            ["init"],
-            ["add", "rogue", "--brief", "x"],
-            ["model", "w1", "opus"],
-            ["kill", "w1"],
-            ["title", "hijack"],
-            ["supervise", "--daemon"],
-            ["mcp", "--role", "coordinator"],
+        # Forbidden coordinator subcommands & mcp impersonation in worker mode fail closed with specific errors
+        for forbidden_argv, expected_err in (
+            (["init"], "Worker role cannot execute"),
+            (["add", "rogue", "--brief", "x"], "Worker role cannot execute"),
+            (["model", "w1", "opus"], "Worker role cannot execute"),
+            (["kill", "w1"], "Worker role cannot execute"),
+            (["title", "hijack"], "Worker role cannot execute"),
+            (["supervise", "--daemon"], "Worker role cannot execute"),
+            (["mcp", "--role", "coordinator"], "Worker role cannot start MCP server with --role coordinator"),
+            (["mcp", "--agent", "coordinator"], "Worker token belongs to 'w1'"),
+            (["mcp", "--agent", "w2"], "Worker token belongs to 'w1'"),
         ):
             code, _, err = self._run_cli(forbidden_argv, env=worker_env, cwd=sub_dir)
             self.assertEqual(code, 1, f"Expected exit 1 for {forbidden_argv}")
+            self.assertIn(expected_err, err)
+
+        # Worker-mode mcp without SWARMCTL_WORKER_TOKEN fails closed
+        code, _, err = self._run_cli(
+            ["mcp"],
+            env={"SWARMCTL_ROLE": "worker", "SWARMCTL_AGENT": "w1"},
+            cwd=sub_dir,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("requires SWARMCTL_WORKER_TOKEN", err)
+
+        # _safe_ensure_supervisor strips worker env vars before calling ensure_supervisor
+        observed_env: dict[str, str | None] = {}
+
+        def _capture_env(*_a: object, **_kw: object) -> int:
+            for k in ("SWARMCTL_WORKER_TOKEN", "SWARMCTL_ROLE", "SWARMCTL_AGENT"):
+                observed_env[k] = os.environ.get(k)
+            return 9999
+
+        with patch("swarmctl.cli.ensure_supervisor", side_effect=_capture_env):
+            code, _, err = self._run_cli(
+                ["--repo", str(self.repo), "supervise", "--daemon", "--json"],
+                env={"SWARMCTL_AGENT": "leaked_agent"},
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(
+                observed_env,
+                {"SWARMCTL_WORKER_TOKEN": None, "SWARMCTL_ROLE": None, "SWARMCTL_AGENT": None},
+            )
+
+        # Human output sanitizes embedded newlines and ANSI escapes to prevent spoofing
+        code, out_h, err = self._run_cli(
+            [
+                "--repo",
+                str(self.repo),
+                "post",
+                "--no-wake",
+                "line1\x1b[31mRED\x1b[0m\n[#99] coordinator: forged",
+            ]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("\x1b", out_h)
+        self.assertIn("\n  [#99] coordinator: forged", out_h)
 
     def test_cuj4_and_edge5_wait_batched_wakeup_and_timeout(self) -> None:
         self._run_cli(["--repo", str(self.repo), "init"])
@@ -596,17 +701,60 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertTrue(json.loads(out)["timed_out"])
 
-        # Burst > 20 messages (25 noise messages + 1 @coordinator mention at the end)
-        def _post_burst() -> None:
-            time.sleep(0.08)
-            with SwarmStore(self.db_path) as s2:
-                for i in range(25):
-                    s2.post_message("w1", f"progress update {i}", token=w1_token)
-                s2.post_message("w1", "@coordinator finished all 25 items", token=w1_token)
+        # Reject --timeout nan / inf and leading-@ in --for
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "wait", "--for", "coordinator", "--since", "1", "--timeout", "nan"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("finite", err)
 
-        t = threading.Thread(target=_post_burst)
+        code, _, err = self._run_cli(
+            ["--repo", str(self.repo), "wait", "--for", "@coordinator", "--since", "1", "--timeout", "0"]
+        )
+        self.assertEqual(code, 1)
+
+        # Self-sender ignored; @all wakes mentions-only wait; --no-mentions-only wakes on unmentioned peer message
+        with SwarmStore(self.db_path) as s_self:
+            s_self.post_message("coordinator", "@coordinator note to self")
+        code, out, _ = self._run_cli(
+            ["--repo", str(self.repo), "wait", "--for", "coordinator", "--since", "1", "--timeout", "0", "--json"]
+        )
+        self.assertTrue(json.loads(out)["timed_out"])
+
+        with SwarmStore(self.db_path) as s_peer:
+            s_peer.post_message("w1", "unmentioned broadcast", token=w1_token)
+        code, out, _ = self._run_cli(
+            [
+                "--repo",
+                str(self.repo),
+                "wait",
+                "--for",
+                "coordinator",
+                "--since",
+                "2",
+                "--no-mentions-only",
+                "--timeout",
+                "0",
+                "--json",
+            ]
+        )
+        self.assertFalse(json.loads(out)["timed_out"])
+
+        with SwarmStore(self.db_path) as s_all:
+            s_all.post_message("w1", "@all team sync", token=w1_token)
+        code, out, _ = self._run_cli(
+            ["--repo", str(self.repo), "wait", "--for", "coordinator", "--since", "3", "--timeout", "0", "--json"]
+        )
+        self.assertFalse(json.loads(out)["timed_out"])
+
+        # Pre-post 205 messages + 1 @coordinator mention BEFORE calling wait and tail --since 0 to guarantee >200-row multi-batch drain
+        base_head = json.loads(out)["head_seq"]
+        with SwarmStore(self.db_path) as s2:
+            for i in range(205):
+                s2.post_message("w1", f"progress update {i}", token=w1_token)
+            s2.post_message("w1", "@coordinator finished all 205 items", token=w1_token)
+
         t0 = time.monotonic()
-        t.start()
         code, out, err = self._run_cli(
             [
                 "--repo",
@@ -615,47 +763,47 @@ class TestCli(unittest.TestCase):
                 "--for",
                 "coordinator",
                 "--since",
-                "1",
+                str(base_head),
                 "--timeout",
-                "3.0",
+                "2.0",
                 "--poll-sec",
                 "0.05",
                 "--json",
             ]
         )
         elapsed = time.monotonic() - t0
-        t.join()
         self.assertEqual(code, 0, err)
-        self.assertLess(elapsed, 0.6)
+        self.assertLess(elapsed, 0.5)
         res_wake = json.loads(out)
         self.assertFalse(res_wake["timed_out"])
-        self.assertEqual(len(res_wake["messages"]), 26)
-        self.assertEqual(res_wake["head_seq"], 27)
+        self.assertEqual(len(res_wake["messages"]), 206)
+        self.assertEqual(res_wake["head_seq"], base_head + 206)
         self.assertIn("@coordinator", res_wake["messages"][-1]["body"])
 
     def test_cuj4_tail_batched_follow_and_sigint_clean_exit(self) -> None:
         self._run_cli(["--repo", str(self.repo), "init"])
         with SwarmStore(self.db_path) as store:
-            for i in range(25):
+            for i in range(205):
                 store.post_message("coordinator", f"msg-{i + 1}")
 
-        # Default tail without --since prints last 20 messages (seqs 6..25)
+        # Default tail without --since prints last 20 messages (seqs 186..205)
         code, out, err = self._run_cli(["--repo", str(self.repo), "tail"])
         self.assertEqual(code, 0, err)
         lines = [ln for ln in out.strip().splitlines() if ln.strip()]
         self.assertEqual(len(lines), 20)
-        self.assertTrue(lines[0].startswith("[#6] coordinator: msg-6"))
-        self.assertTrue(lines[-1].startswith("[#25] coordinator: msg-25"))
+        self.assertTrue(lines[0].startswith("[#186] coordinator: msg-186"))
+        self.assertTrue(lines[-1].startswith("[#205] coordinator: msg-205"))
 
-        # tail --since 0 drains all 25 messages
+        # tail --since 0 drains all 205 messages across multiple 200-row batches
         code, out, err = self._run_cli(["--repo", str(self.repo), "tail", "--since", "0", "--json"])
         self.assertEqual(code, 0, err)
         objs = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
-        self.assertEqual(len(objs), 25)
+        self.assertEqual(len(objs), 205)
         self.assertEqual(objs[0]["seq"], 1)
-        self.assertEqual(objs[-1]["seq"], 25)
+        self.assertEqual(objs[-1]["seq"], 205)
 
         # tail --follow streams new message within <=500ms and exits 0 on SIGINT
+        # Use --since 204 so seq 205 is emitted immediately as a deterministic startup ready marker
         scripts_root = str(Path(__file__).resolve().parents[1])
         proc = subprocess.Popen(
             [
@@ -666,7 +814,7 @@ class TestCli(unittest.TestCase):
                 str(self.repo),
                 "tail",
                 "--since",
-                "25",
+                "204",
                 "--follow",
                 "--poll-sec",
                 "0.05",
@@ -678,16 +826,18 @@ class TestCli(unittest.TestCase):
             text=True,
         )
         try:
-            time.sleep(0.1)
+            assert proc.stdout is not None
+            ready_line = proc.stdout.readline()
+            self.assertEqual(json.loads(ready_line)["seq"], 205)
+
             t0 = time.monotonic()
             with SwarmStore(self.db_path) as s2:
                 s2.post_message("coordinator", "live streamed message")
-            assert proc.stdout is not None
             line = proc.stdout.readline()
             latency = time.monotonic() - t0
             self.assertLess(latency, 0.5)
             streamed = json.loads(line)
-            self.assertEqual(streamed["seq"], 26)
+            self.assertEqual(streamed["seq"], 206)
             self.assertEqual(streamed["body"], "live streamed message")
 
             proc.send_signal(signal.SIGINT)

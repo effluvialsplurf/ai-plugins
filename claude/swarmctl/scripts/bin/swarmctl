@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-scripts_root = str(Path(__file__).resolve().parents[1])
-if scripts_root not in sys.path:
-    sys.path.insert(0, scripts_root)
+_SCRIPTS_DIR = str(Path(__file__).resolve().parents[1])
+sys.path.insert(0, _SCRIPTS_DIR)
 
 from swarmctl.cli import main  # noqa: E402
 
