@@ -870,7 +870,8 @@ class TestCli(unittest.TestCase):
             self.assertEqual(json.loads(out), {"pid": None, "already_running": True})
 
         # mcp lazy-import failure exits 1 cleanly without Python traceback
-        code, out, err = self._run_cli(["--repo", str(self.repo), "mcp"])
+        with patch.dict(sys.modules, {"swarmctl.mcp_server": None}):
+            code, out, err = self._run_cli(["--repo", str(self.repo), "mcp"])
         self.assertEqual(code, 1)
         self.assertIn("MCP server is not available yet", err)
         self.assertNotIn("Traceback", err)
