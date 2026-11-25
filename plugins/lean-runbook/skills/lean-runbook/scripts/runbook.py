@@ -459,30 +459,29 @@ def decide_write(state: dict[str, Any], path: Any, content: Any, is_edit: bool) 
 
 STATE_DIR = ".cache/lean-runbook"
 CLI_RE = re.compile(r"runbook\.py|(?<![\w.-])lean-runbook(?![\w./-])")  # may follow "/": shim invoked by path
-OVERRIDE_RE = re.compile(r"\b(skip\b.*\bgate|done\b.*\b(goldfish|0*2)|start\b.*--force)\b", re.I | re.S)
+OVERRIDE_RE = re.compile(r"\b(skip\b.*\bgate|done\b.*\b(goldfish|0*2(?![>\w]))|start\b.*--force)\b", re.I | re.S)
 EVASION_RE = re.compile(r"[\"'\\{}]")  # defeats quote/brace evasion such as lean-"runbook"
 
 
-def is_cli_call(seg: str, marks: tuple[str, ...]) -> bool:
-    """True when the segment's command word is the runbook CLI and it does not redirect into the state dir."""
+def is_cli_call(cmd: str) -> bool:
+    """True when the whole command is one plain runbook CLI call: no separator, redirect, substitution, escape or comment."""
+    if re.search(r"[;&|\n`()<>#\\]", cmd):
+        return False
     try:
-        words = shlex.split(seg)
+        words = shlex.split(cmd)
     except ValueError:
         return False
     while words and re.fullmatch(r"\w+=.*", words[0]):
         words.pop(0)  # leading env assignments
     if words and re.fullmatch(r"(.*/)?(python3?|sh|bash)", words[0]):
         words.pop(0)
-    return bool(words and re.fullmatch(r"(.*/)?(lean-runbook|runbook\.py)", words[0])) and not re.search(r">[^<>]*(" + "|".join(map(re.escape, marks)) + ")", seg)
+    return bool(words and re.fullmatch(r"(.*/)?(lean-runbook|runbook\.py)", words[0]))
 
 
 def decide_cmd(state: dict[str, Any], cmd: str) -> Decision:
-    cmd = cmd.replace("\\\n", " ")  # line continuation
-    marks = (str(data_root()), STATE_DIR, "LEAN_RUNBOOK_DATA")
-    for raw in re.split(r"[;&|\n`]|\$\(", cmd):
-        if any(m in EVASION_RE.sub("", raw) for m in marks) and not is_cli_call(raw, marks):
-            return Decision("deny", "Direct access to the lean-runbook state directory is blocked. Use the lean-runbook CLI.")
-    plain = EVASION_RE.sub("", cmd)
+    plain = EVASION_RE.sub("", cmd.replace("\\\n", ""))  # join line continuations, as the shell does
+    if any(m in plain for m in (str(data_root()), STATE_DIR, "$LEAN_RUNBOOK_DATA")) and not is_cli_call(cmd):
+        return Decision("deny", "Direct access to the lean-runbook state directory is blocked. Use the lean-runbook CLI.")
     if state.get("active") and CLI_RE.search(plain):
         if OVERRIDE_RE.search(plain) or (gate_is_closed(state) and re.search(r"\bfinish\b", plain)):
             return Decision("ask", f"lean-runbook: opening, bypassing, resetting or abandoning the spec gate for '{state['slug']}' needs explicit user approval.")
@@ -550,8 +549,6 @@ def cmd_pre_commit(cwd: str | None) -> int:
             state = json.loads(state_path_for(repo).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return 0  # truly no state; anything else (corrupt, unreadable) falls through to block
-        if not isinstance(state, dict):
-            raise ValueError("state file is not a JSON object")
         code = [f for f in out.split("\0") if f and is_code_file(repo / f, repo)]
         if not code or not state.get("active") or not gate_is_closed(state):
             return 0

@@ -62,7 +62,7 @@ class TestHooks(Base):
                 with self.subTest(harness=harness, kind=kind, arg=arg[:60], extra=extra[:6]):
                     out = self.hook("pre-tool-use", payload, "--harness", harness)
                     got = out.get("hookSpecificOutput", {}).get("permissionDecision", "allow") if harness == "claude" else out["decision"].replace("force_ask", "ask")
-                    self.assertEqual(got, want)
+                    self.assertEqual(got, want, out)
 
     def test_closed_gate_yields_equal_decisions_on_both_protocols(self):
         spec, fresh = (str(self.repo / "docs/specs" / n) for n in ("feat.md", "new.md"))
@@ -73,21 +73,25 @@ class TestHooks(Base):
             ("write", f"{r}/app.py", "x", "deny"), ("write", f"{r}/a/../../repo/app.py", "x", "deny"), ("write", f"{d}/repos/z/state.json", "{}", "deny"),
             ("write", spec, "line\n" * 120, "allow"), ("write", spec, "l\n" * 320, "allow"), ("write", spec, "l\n" * 321, "ask"), ("write", spec, "line\n" * 350, "ask"),
             ("edit", spec, [("x", "y\n" * 30, False)], "ask"), ("edit", spec, [("x", "y", False)], "allow"), ("edit", spec, [grow], "ask"),
-            ("edit", spec, [("x", "x\ny", False)], "allow"), ("edit", spec, [("zzz", "q\n" * 60, True)], "allow"), ("edit", spec, [grow, ("y\n", "", True)], "allow"),
+            ("edit", spec, [("x", "x\ny", False)], "allow"), ("edit", spec, [("zzz", "q\n" * 60, True)], "allow"), ("edit", spec, [grow, ("y\n", "", True)], "allow"), ("edit", spec, [grow, ("y", "y\nz", False)], "ask"),
             ("edit", fresh, [("", "l\n" * 400, False)], "ask"), ("edit", fresh, [("", "l\n", False)], "allow"),
             *cmds("ask", "lean-runbook done goldfish", "python3 /p/runbook.py skip gate --reason r", "lean-runbook start o --force", "lean-runbook finish",
                   "~/.local/bin/lean-runbook done goldfish", "/usr/local/bin/lean-runbook done goldfish", '"$HOME/.local/bin/lean-runbook" skip gate --reason x',
-                  "lean-runbook done --reason ok goldfish", "lean-runbook done GOLDFISH", "lean-runbook done 02", "lean-runbook done --cwd . goldfish",
+                  "lean-runbook done --reason ok goldfish", "lean-runbook done GOLDFISH", "lean-runbook done 02", "lean-runbook done 2", "lean-runbook done 2 2>&1", "lean-runbook done --cwd . goldfish",
                   "lean-runbook skip --reason r gate", "lean-runbook skip GATE", "lean-runbook start --force feat", "lean-runbook start feat \\\n --force"),
-            *cmds("allow", "lean-runbook status", "ls -la", "lean-runbook done spec", "lean-runbook start feat", "~/.local/bin/lean-runbook status"),
-            *cmds("deny", "cat $HOME/.cache/lean-runbook/repos/z/state.json", "cat ~/.cache/lean-\"runbook\"/repos/z/state.json", f"lean-runbook status; rm -rf {d}")])
+            *cmds("allow", "lean-runbook status", "ls -la", "lean-runbook done spec", "lean-runbook start feat", "~/.local/bin/lean-runbook status",
+                  "lean-runbook done spec 2>&1", "lean-runbook done build 2>/dev/null", "git grep LEAN_RUNBOOK_DATA", "LEAN_RUNBOOK_DATA=/tmp/x python3 -m unittest", "export LEAN_RUNBOOK_DATA=/tmp/x", 'git commit -m "doc LEAN_RUNBOOK_DATA"'),
+            *cmds("deny", "cat $HOME/.cache/lean-runbook/repos/z/state.json", "cat ~/.cache/lean-\"runbook\"/repos/z/state.json", f"lean-runbook status; rm -rf {d}", "rm -rf $LEAN_RUNBOOK_DATA", "rm -rf ${LEAN_RUNBOOK_DATA}", 'rm -rf "$LEAN_RUNBOOK_DATA"')])
 
     def test_state_dir_exemption_needs_the_cli_as_command_word_and_holds_without_active_feature(self):
         d = self.env["LEAN_RUNBOOK_DATA"] = str(self.tmp / "my data" / "lean-runbook")  # spaces, and ends in lean-runbook
         self.rb("--cwd", str(self.repo), "start", "feat")
         self.check([*cmds("deny", "rm -rf ~/.cache/lean-runbook", "rm -rf ~/.cache/lean-runbook/", 'rm -rf "$HOME/.cache/lean-runbook"', 'rm -rf "$HOME/.cache/lean-runbook/"',
                           "cd ~/.cache/lean-runbook && rm -rf .", f'rm -rf "{d}"', f'rm -rf "{d}/"', f'rm -rf "{d}" # lean-runbook', f'cat "{d}/x" lean-runbook',
-                          f'echo lean-runbook > "{d}/state.json"', f'lean-runbook status > "{d}/x"', "rm -rf ~/.cache/lean-runbook # lean-runbook"),
+                          f'echo lean-runbook > "{d}/state.json"', f'lean-runbook status > "{d}/x"', "rm -rf ~/.cache/lean-runbook # lean-runbook",
+                          r"rm -rf a\; ~/.cache/lean-runbook", r"rm -rf a\& ~/.cache/lean-runbook", r"rm -rf a\; $HOME/.cache/lean-runbook", 'rm -rf ~/.cache/lean-runbook "',
+                          "xargs rm -rf <<EOF\n$HOME/.cache/lean-runbook\nEOF", "lean-runbook status # \\\nrm -rf ~/.cache/lean-runbook", "lean-runbook status \\\\\nrm -rf ~/.cache/lean-runbook",
+                          "lean-runbook <(rm -rf ~/.cache/lean-runbook)", 'lean-runbook status > ~/.cache/lean-"runbook"/x'),
                     *cmds("allow", "lean-runbook status", "~/.local/bin/lean-runbook status", 'python3 "/p q/runbook.py" status', f'LEAN_RUNBOOK_DATA="{d}" lean-runbook status',
                           f'python3 "{d}/../x/runbook.py" status')])
         self.rb("--cwd", str(self.repo), "finish")  # no active feature: only the state-dir protection applies
@@ -101,6 +105,7 @@ class TestHooks(Base):
                 self.assertEqual(out.get("decision", "allow"), "allow", (raw, flags))
         agy = self.payloads("write", f"{self.repo}/a.py", "x")["antigravity"]
         self.assertEqual(self.hook("pre-tool-use", agy)["decision"], "deny")
+        self.assertIn("hookSpecificOutput", self.hook("pre-tool-use", self.payloads("write", f"{self.repo}/a.py", "x")["claude"]))
         self.assertEqual(self.hook("pre-tool-use", agy, "--harness", "claude"), {})
         self.assertEqual(self.hook("pre-tool-use", self.payloads("cmd", "ls", "")["claude"], "--harness", "antigravity"), {"decision": "allow"})
 
