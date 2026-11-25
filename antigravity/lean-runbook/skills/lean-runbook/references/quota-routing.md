@@ -20,37 +20,37 @@ Run `swarm(action="models", all=True)` at Stage 0 (or start of an Epic wave) to 
 
 | Pool | Reset Window | Exact Model IDs | Primary Strength |
 |---|---|---|---|
-| **Pool 1: Gemini Models** | 5-hour + Weekly | `gemini-3.8-flash-{low,medium,high}`<br>`gemini-4-neon-{low,medium,high,xhigh}`<br>`gemini-4-hydrogen-{low,medium,high,xhigh}`<br>`gemini-pro-orchestrator-neon` | Cheap read-only scouting & clarity passes (`gemini-3.8-flash-low` / `-medium`); secondary builder only if Pools 2 & 3 are low |
-| **Pool 2: Claude & GPT** | Independent 5-hour + Weekly | `claude-sonnet-5-5-{low,medium,high}`<br>`claude-opus-5-5-{low,medium,high}`<br>`gpt-oss-120b-medium` | Primary TDD Builder / Slice Worker (`claude-sonnet-5-5-medium`), flagship Adversarial Critic (`claude-opus-5-5-high`), lightweight clarity/alt (`gpt-oss-120b-medium`) |
-| **Pool 3: Gemini 4 Argon** | Independent Weekly | `gemini-4-argon-{low,medium,high}`<br>`gemini-pro-orchestrator-g1-pro` | Contract Planner & Goldfish Technical Critic (`gemini-4-argon-medium`), Cross-Family Critic when Claude built (`gemini-4-argon-high`), alternate Slice Worker, thin Coordinator fallback (`gemini-pro-orchestrator-g1-pro`) |
+| **Pool 1: Gemini Models** | 5-hour + Weekly | `gemini-3.8-flash-{low,medium,high}`<br>`gemini-4-neon-{low,medium,high,xhigh}`<br>`gemini-4-hydrogen-{low,medium,high,xhigh}`<br>`gemini-pro-orchestrator-neon` | **Preferred for all non-implementation & review steps** (`gemini-4-neon-medium` for planning/Goldfish, `gemini-4-neon-high` for cross-vendor reviews when Claude built), plus cheap scouting & clarity passes (`gemini-3.8-flash-low` / `-medium`) |
+| **Pool 2: Claude & GPT** | Independent 5-hour + Weekly | `claude-sonnet-5-5-{low,medium,high}`<br>`claude-opus-5-5-{low,medium,high}`<br>`gpt-oss-120b-medium` | Primary TDD Builder / Slice Worker (`claude-sonnet-5-5-medium`, or Pool 4 `claude-sub`), flagship Adversarial Critic when Gemini built (`claude-opus-5-5-high`, or Pool 4 `claude-sub` `opus` `high`), lightweight clarity/alt (`gpt-oss-120b-medium`) |
+| **Pool 3: Gemini 4 Argon** | Independent Weekly | `gemini-4-argon-{low,medium,high}`<br>`gemini-pro-orchestrator-argon` | Parallel implementation Slice Worker (`gemini-4-argon-medium`), and fallback for planning/review only if Pool 1 Neon drops below 25% |
 
 ---
 
-## 2. Default 3-Pool Seat Matrix (All Slices & Epics)
+## 2. Default Seat Matrix (All Slices & Epics — Neon for Non-Implementation & Reviews)
 
-Use this allocation by default so **every** feature — Single Slice, Mini-Series, and Epic — spreads tokens across all 3 pools while guaranteeing **true cross-family verification**:
+Use this allocation by default so **every** feature — Single Slice, Mini-Series, and Epic — uses **Gemini 4 Neon** for planning, Goldfish, and reviews, while spreading implementation across Claude (Pool 2 / Pool 4 `claude-sub`) and Argon (Pool 3) with **true cross-family verification**:
 
 | Stage / Seat | Swarm `name` | `workspace` | Default Model | Pool | Fallback if Pool < 25% |
 |---|---|---|---|---|---|
-| **Coordinator** | Main chat | main repo | User's current chat model (stay thin!) | Any | Switch via `swarm(action="model", model="gemini-pro-orchestrator-g1-pro")` or `"claude-sonnet-5-5-medium"` only if quota/capacity hits limit or user asks |
+| **Coordinator** | Main chat | main repo | User's current chat model (stay thin!) | Any | Switch via `swarm(action="model", model="gemini-pro-orchestrator-neon")` or `"gemini-pro-orchestrator-argon"` only if quota/capacity hits limit or user asks |
 | **Stage 0–1 Scout** | `scout` (or `epic-scout`) | `inherit` (read-only) | `gemini-3.8-flash-low` | **Pool 1** | `gpt-oss-120b-medium` (Pool 2) or `claude-sonnet-5-5-low` (Pool 2) |
-| **Stage 2 Goldfish Clarity** | `goldfish-clarity` | `inherit` (read-only) | `gemini-3.8-flash-medium` | **Pool 1** | `gpt-oss-120b-medium` (Pool 2) |
-| **Stage 2 Goldfish Critic** | `goldfish-critic` | `inherit` (read-only) | `gemini-4-argon-medium` | **Pool 3** | `claude-opus-5-5-medium` (Pool 2) |
-| **Stage 3 Contract Planner** | `planner-<slug>` | `inherit` (read-only) | `gemini-4-argon-medium` | **Pool 3** | `claude-sonnet-5-5-high` (Pool 2) |
-| **Stage 4 Builder / Slice Worker** | `builder-<slug>` or `slice-<slug>` | `inherit` (1 slice) or **`share`** (parallel / epic) | `claude-sonnet-5-5-medium` | **Pool 2** | `gemini-4-argon-medium` (Pool 3), or `gemini-4-neon-medium` (Pool 1) if Pools 2 & 3 < Pool 1 |
-| **Stage 5 Adversarial Critic** | `critic-<slug>` | `inherit` (read-only) | **Strict opposite vendor from Builder:**<br>• Claude/GPT built → `gemini-4-argon-high`<br>• Argon or any Gemini built → `claude-opus-5-5-high` | **Pool 3** / **Pool 2** | `claude-sonnet-5-5-high` (if Opus 5h-limited) or `gemini-4-neon-high` (if Argon exhausted). **Never claim cross-family if both are Gemini or both are Claude.** |
+| **Stage 2 Goldfish Clarity** | `goldfish-clarity` | `inherit` (read-only) | `gemini-3.8-flash-medium` *(or `gemini-4-neon-medium`)* | **Pool 1** | `gpt-oss-120b-medium` (Pool 2) |
+| **Stage 2 Goldfish Critic** | `goldfish-critic` | `inherit` (read-only) | **`gemini-4-neon-medium`** | **Pool 1** | `gemini-4-argon-medium` (Pool 3) or `claude-opus-5-5-medium` (Pool 2) / Pool 4 `claude-sub` |
+| **Stage 3 Contract Planner** | `planner-<slug>` | `inherit` (read-only) | **`gemini-4-neon-medium`** *(or `gemini-4-neon-high` for complex slices)* | **Pool 1** | `gemini-4-argon-medium` (Pool 3) or `claude-sonnet-5-5-high` (Pool 2) / Pool 4 `claude-sub` |
+| **Stage 4 Builder / Slice Worker** | `builder-<slug>` or `slice-<slug>` | `inherit` (1 slice) or **`share`** (parallel / epic) | `claude-sonnet-5-5-medium` (Pool 2) or **Pool 4 `claude-sub`** (`sonnet`) | **Pool 2 / Pool 4** | `gemini-4-argon-medium` (Pool 3), or `gemini-4-neon-medium` (Pool 1) if Pools 2, 3 & 4 are exhausted |
+| **Stage 5 Adversarial Critic** | `critic-<slug>` | `inherit` (read-only) | **Strict opposite vendor from Builder:**<br>• Claude/GPT built (`claude-*`/`gpt-*`/`claude-sub/*`) → **`gemini-4-neon-high`**<br>• Argon/Neon/Gemini built → `claude-opus-5-5-high` (Pool 2) or **Pool 4 `claude-sub` (`opus`, `high`)** | **Pool 1** / **Pool 2 or 4** | `gemini-4-argon-high` (if Neon < 25%) or `claude-sonnet-5-5-high` / Pool 4 `sonnet` `high` (if Opus 5h-limited). **Never claim cross-family if both are Gemini or both are Claude.** |
 
 ### Cross-Vendor Verification Receipt (Mandatory for Stage 5)
-1. **Strict vendor opposition:** Any `gemini-*` builder MUST be reviewed by a `claude-*` critic (`claude-opus-5-5-high`, fallback `claude-sonnet-5-5-high`). Any `claude-*` / `gpt-*` builder MUST be reviewed by a `gemini-*` critic (`gemini-4-argon-high`, fallback `gemini-4-neon-high`).
-2. **Verify via `swarm(action="status")`:** Before marking Stage 5 done, verify from `swarm(action="status")` that the builder and critic actually ran on opposite vendors, and record both exact model IDs at the top of `.loop/<slug>/branch-review.md` (and in `EPIC.md`'s Merge Log):
+1. **Strict vendor opposition:** Any `gemini-*` builder MUST be reviewed by a `claude-*` / `claude-sub/*` critic (`claude-opus-5-5-high` or Pool 4 `claude-sub` `opus` `high`, fallback `sonnet` `high`). Any `claude-*` / `claude-sub/*` / `gpt-*` builder MUST be reviewed by a `gemini-*` critic (**`gemini-4-neon-high`** preferred; fallback `gemini-4-argon-high`).
+2. **Verify via `swarm(action="status")`:** Before marking Stage 5 done, verify from `swarm(action="status")` (and `[claude-sub receipt]` if Pool 4 was used) that the builder and critic actually ran on opposite vendors, and record both exact model IDs at the top of `.loop/<slug>/branch-review.md` (and in `EPIC.md`'s Merge Log):
    `Builder: <exact-model-id> | Critic: <exact-model-id>`
 3. **Fail loud if `swarm` is unavailable:** Never silently downgrade a cross-family review to `invoke_subagent` or `run_workflow` (which run on the same vendor). If `swarm` is not available in the current session, stop and tell the user before merging.
 
 ### Parallel Wave Load-Balancing (2–3 Concurrent `workspace: "share"` Slices)
-When running 2–3 disjoint slices concurrently in an Epic wave, **split builders across Pools 2 and 3** instead of stacking all workers on one pool:
-- **Worker 1:** `claude-sonnet-5-5-medium` (Pool 2) → reviewed by `gemini-4-argon-high` (Pool 3)
-- **Worker 2:** `gemini-4-argon-medium` (Pool 3) → reviewed by `claude-opus-5-5-high` (Pool 2)
-- **Worker 3 (if needed):** Pick whichever of Pool 2, Pool 3, or Pool 1 (`gemini-4-neon-medium`) has the highest remaining quota from `swarm(action="models", all=True)`.
+When running 2–3 disjoint slices concurrently in an Epic wave, **split builders across Claude (Pool 4 / Pool 2) and Argon (Pool 3)** so Neon quota stays reserved for planning & reviews:
+- **Worker 1:** Pool 4 `claude-sub` (`sonnet` via `gemini-3.8-flash-low` relay) or `claude-sonnet-5-5-medium` (Pool 2) → reviewed by **`gemini-4-neon-high`** (Pool 1)
+- **Worker 2:** `gemini-4-argon-medium` (Pool 3) → reviewed by **Pool 4 `claude-sub` (`opus`, `high`)** or `claude-opus-5-5-high` (Pool 2)
+- **Worker 3 (if needed):** Pick whichever of Pool 2, Pool 4, Pool 3, or Pool 1 (`gemini-4-neon-medium`) has the highest remaining quota from `swarm(action="models", all=True)`.
 
 ---
 

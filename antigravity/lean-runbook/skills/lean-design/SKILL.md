@@ -61,7 +61,7 @@ of the reader-facing suite.
 |---|---|---|---|---|
 | 0 | **Intake & Recon** | Thin Coordinator + `design-scout` (**Pool 1:** `gemini-3.8-flash-low`, read-only) | Mode (`greenfield` \| `redesign`), tier (`standard` \| `complex`), `.loop/designs/<slug>/recon.md` (≤120 lines) | `design_check.py init <slug> ...` |
 | 1 | **Elephant Interrogation** | Main chat (thin Coordinator + user via `ask_question`) | `.loop/designs/<slug>/brief.md` (≤100 lines, locked rulings) | User confirms brief rulings → `design_check.py done brief <slug>` |
-| 2 | **Budgeted 3-Doc Draft** | `design-drafter` (**Pool 2:** `claude-sonnet-5-5-medium` or **Pool 3:** `gemini-4-argon-medium`, read-only on codebase, writes only `docs/designs/<slug>/`) | `design.md`, `tech-plan.md`, `spec.md` | `design_check.py check docs/designs/<slug>` passes (budget + ID traceability + anti-bloat) → `done draft` |
+| 2 | **Budgeted 3-Doc Draft** | `design-drafter` (**Pool 1:** `gemini-4-neon-high` preferred, or **Pool 4:** `claude-sub` / **Pool 2:** `claude-sonnet-5-5-medium`, read-only on codebase, writes only `docs/designs/<slug>/`) | `design.md`, `tech-plan.md`, `spec.md` | `design_check.py check docs/designs/<slug>` passes (budget + ID traceability + anti-bloat) → `done draft` |
 | 3 | **3-Lens Cross-Vendor Goldfish Review** | 3 parallel fresh-context read-only `swarm` critics across all 3 pools (see [references/goldfish-review.md](./references/goldfish-review.md)) | `.loop/designs/<slug>/goldfish-report.md` (≤180 lines, with model receipt) | All 3 lenses complete + consolidated → `done review` |
 | 4 | **Resolve, Compress & Handoff** | Main chat (user decisions) + `design-drafter` (compression pass) | Approved 3-doc suite + Reader & `lean-runbook` Handoff Card | `design_check.py check docs/designs/<slug> --strict` exits 0 + user approves → `done resolve` |
 | 5 | **Drift Report (Optional, Post-Build)** | `drift-auditor` (**Pool 1:** `gemini-3.8-flash-medium`, read-only) | `docs/designs/<slug>/drift-report.md` (≤150 lines) | Compares merged code/epic against `BR-*`, `RISK-*`, `ADR-*`, `INV-*` |
@@ -91,7 +91,7 @@ of the reader-facing suite.
 - Record locked answers in `.loop/designs/<slug>/brief.md` using [templates/brief.md](./templates/brief.md) (**≤100 lines**), get quick user confirmation, and mark `design_check.py done brief <slug>`.
 
 ### Stage 2: Budgeted 3-Doc Drafting (Zero Duplication)
-- Spawn `design-drafter` via `swarm(action="add", ...)` on **Pool 2** (`claude-sonnet-5-5-medium`) or **Pool 3** (`gemini-4-argon-medium`) — pick whichever pool has higher remaining quota.
+- Spawn `design-drafter` via `swarm(action="add", ...)` on **Pool 1** (**`gemini-4-neon-high`** preferred for non-implementation design work) OR **Pool 4 `claude-sub`** / **Pool 2** (`claude-sonnet-5-5-medium`) when pairing with a Neon critic — fallback to Pool 3 (`gemini-4-argon-medium`) only if Neon < 25%.
 - Instruct `design-drafter` to fill [templates/design.md](./templates/design.md), [templates/tech-plan.md](./templates/tech-plan.md), and [templates/spec.md](./templates/spec.md) strictly following these **6 Anti-Bloat Laws**:
   1. **Single Source of Truth by ID:** Define `BR-*`, `RISK-*`, `ADR-*` in `design.md`; define `INV-*` in `tech-plan.md`; define `SLICE-*` and `CUJ-*` in `spec.md`. Downstream docs **cite IDs** (`Satisfies BR-1, BR-3; enforces INV-2`) — **never re-explain requirements or architecture in prose**.
   2. **Tables & Diagrams Over Essays:** Use dense markdown tables and at most **1–2 crisp Mermaid diagrams** per doc. Rejected alternatives are **1-line table rows**, never paragraphs.
@@ -101,13 +101,13 @@ of the reader-facing suite.
   6. **Verify Before Handing Back:** `design-drafter` MUST run `design_check.py check docs/designs/<slug>` and fix any budget overshoot, duplicate prose, large code block, or orphan `BR-*`/`RISK-*`/`INV-*` ID before reporting done.
 
 ### Stage 3: 3-Lens Fresh-Context Goldfish Review (Cross-Vendor)
-Read [references/goldfish-review.md](./references/goldfish-review.md) and launch **3 parallel fresh-context read-only `swarm` critics** across all 3 quota pools:
-1. **`goldfish-clarity` (Pool 1: `gemini-3.8-flash-medium`):** Naive-reader clarity, jargon, ambiguity, cross-doc duplication, and **explicit bloat-cut recommendations**.
+Read [references/goldfish-review.md](./references/goldfish-review.md) and launch **3 parallel fresh-context read-only `swarm` critics**:
+1. **`goldfish-clarity` (Pool 1: `gemini-3.8-flash-medium` or `gemini-4-neon-medium`):** Naive-reader clarity, jargon, ambiguity, cross-doc duplication, and **explicit bloat-cut recommendations**.
 2. **`goldfish-architect` (Strict opposite vendor flagship from `design-drafter`!):**
-   - If Claude drafted → **`gemini-4-argon-high`** (Pool 3).
-   - If Argon/Gemini drafted → **`claude-opus-5-5-high`** (Pool 2, fallback `claude-sonnet-5-5-high`).
+   - If Claude drafted (Pool 2 or Pool 4 `claude-sub`) → **`gemini-4-neon-high`** (Pool 1 preferred; fallback `gemini-4-argon-high` if Pool 1 < 25%).
+   - If Neon/Argon/Gemini drafted → **Pool 4 `claude-sub` (`opus`, `high`)** or **`claude-opus-5-5-high`** (Pool 2, fallback `claude-sonnet-5-5-high`).
    - Attacks architecture, failure modes, migration/rollback gaps, and audits every `RISK-*` against the input doc (if any) to verify genuine structural elimination.
-3. **`goldfish-handoff` (Remaining pool — Pool 2 `claude-sonnet-5-5-high` or Pool 3 `gemini-4-argon-medium`):** Audits 100% `BR-*` → `INV-*` → `SLICE-*` coverage, verifies every slice obeys `≤3 commits / ≤600 LOC` with disjoint wave boundaries, and checks that `lean-runbook` can launch directly from `spec.md` with zero rediscovery.
+3. **`goldfish-handoff` (Preferred Neon or Claude):** **`gemini-4-neon-medium`** (when Claude drafted) or **Pool 4 `claude-sub` (`sonnet`) / Pool 2 `claude-sonnet-5-5-high`** (when Neon drafted; fallback `gemini-4-argon-medium`). Audits 100% `BR-*` → `INV-*` → `SLICE-*` coverage, verifies every slice obeys `≤3 commits / ≤600 LOC` with disjoint wave boundaries, and checks that `lean-runbook` can launch directly from `spec.md` with zero rediscovery.
 
 Consolidate findings into `.loop/designs/<slug>/goldfish-report.md` (**≤180 lines**, deduplicated, with `Drafter: <model> | Critics: <models>` receipt verified via `swarm(action="status")`), then retire (`kill`) the 3 critics once consumed.
 

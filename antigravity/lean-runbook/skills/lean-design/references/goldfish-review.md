@@ -13,11 +13,11 @@ experiences the 3-doc suite exactly like a cold human engineer reading it for th
 
 Check `swarm(action="models", all=True)` before spawning and pin exact opposite vendors from `design-drafter`:
 
-| Critic Seat | `swarm` Name | Default Model & Pool | If `design-drafter` Used Argon (Pool 3) | If `design-drafter` Used Claude (Pool 2) |
+| Critic Seat | `swarm` Name | Default Model & Pool | If `design-drafter` Used Neon/Gemini (Pool 1/3) | If `design-drafter` Used Claude (Pool 4 / Pool 2) |
 |---|---|---|---|---|
-| **Lens 1: Clarity & Bloat Auditor** | `goldfish-clarity` | **Pool 1:** `gemini-3.8-flash-medium` *(fallback: `gpt-oss-120b-medium`)* | `gemini-3.8-flash-medium` (Pool 1) | `gemini-3.8-flash-medium` (Pool 1) |
-| **Lens 2: Adversarial Architect & Risk Critic** | `goldfish-architect` | **Strict opposite flagship vendor** | **Pool 2:** `claude-opus-5-5-high` *(fallback: `claude-sonnet-5-5-high`)* | **Pool 3:** `gemini-4-argon-high` *(fallback: `gemini-4-neon-high`)* |
-| **Lens 3: Requirements & `lean-runbook` Handoff Auditor** | `goldfish-handoff` | **Remaining pool** | **Pool 2:** `claude-sonnet-5-5-high` | **Pool 3:** `gemini-4-argon-medium` |
+| **Lens 1: Clarity & Bloat Auditor** | `goldfish-clarity` | **Pool 1:** `gemini-3.8-flash-medium` *(or `gemini-4-neon-medium`)* | `gemini-3.8-flash-medium` (Pool 1) | `gemini-3.8-flash-medium` (Pool 1) |
+| **Lens 2: Adversarial Architect & Risk Critic** | `goldfish-architect` | **Strict opposite flagship vendor** | **Pool 4:** `claude-sub` (`opus`, `high`) or **Pool 2:** `claude-opus-5-5-high` *(fallback: `sonnet` `high`)* | **Pool 1:** **`gemini-4-neon-high`** *(preferred; fallback `gemini-4-argon-high` if Pool 1 < 25%)* |
+| **Lens 3: Requirements & `lean-runbook` Handoff Auditor** | `goldfish-handoff` | **Neon or Claude** | **Pool 4:** `claude-sub` (`sonnet`) or **Pool 2:** `claude-sonnet-5-5-high` | **Pool 1:** **`gemini-4-neon-medium`** *(fallback `gemini-4-argon-medium`)* |
 
 - Always verify the actual Drafter + Critic models via `swarm(action="status")` and record the receipt at
   the top of `.loop/designs/<slug>/goldfish-report.md`:

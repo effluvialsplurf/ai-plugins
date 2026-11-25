@@ -31,11 +31,11 @@ across all **3 independent weekly quota pools** (see [quota-routing.md](./quota-
 
 | Seat | Swarm `name` | `workspace` | Default Model & Pool | When to Spawn |
 |---|---|---|---|---|
-| **Coordinator** | Main chat | main repo (`epic/<epic-slug>`) | Current chat model (keep thin; switch to `gemini-pro-orchestrator-g1-pro` or `claude-sonnet-5-5-medium` via `swarm(action="model", ...)` only on quota limit or user request) | Always — stays open for the Epic |
+| **Coordinator** | Main chat | main repo (`epic/<epic-slug>`) | Current chat model (keep thin; switch to `gemini-pro-orchestrator-neon` or `gemini-pro-orchestrator-argon` via `swarm(action="model", ...)` only on quota limit or user request) | Always — stays open for the Epic |
 | **Epic Scout** | `epic-scout` | `inherit` (read-only) | **Pool 1:** `gemini-3.8-flash-low` *(fallback: `gpt-oss-120b-medium`)* | Stage 0 recon & checking unforeseen coupling during brainstorming (keep asleep at 0 tokens) |
-| **Slice Worker (Wave Slot A)** | `slice-<short-slug>` | **`share`** (isolated git worktree) | **Pool 2:** `claude-sonnet-5-5-medium` | Primary slice worker (**cap ≤3 concurrent**, ONLY on disjoint files) |
-| **Slice Worker (Wave Slot B)** | `slice-<short-slug>` | **`share`** (isolated git worktree) | **Pool 3:** `gemini-4-argon-medium` | Concurrent wave partner — spreads parallel load across Pools 2 & 3 simultaneously |
-| **Cross-Family Critic** | `critic-<short-slug>` | `inherit` (read-only) | **Opposite flagship pool:**<br>• Claude built → **Pool 3:** `gemini-4-argon-high`<br>• Argon/Gemini built → **Pool 2:** `claude-opus-5-5-high` | Stage 5 whole-branch adversarial review before merging into `epic/<epic-slug>` |
+| **Slice Worker (Wave Slot A)** | `slice-<short-slug>` | **`share`** (isolated git worktree) | **Pool 4:** `claude-sub` (`sonnet` via `gemini-3.8-flash-low` relay) or **Pool 2:** `claude-sonnet-5-5-medium` | Primary slice worker (**cap ≤3 concurrent**, ONLY on disjoint files) |
+| **Slice Worker (Wave Slot B)** | `slice-<short-slug>` | **`share`** (isolated git worktree) | **Pool 3:** `gemini-4-argon-medium` | Concurrent wave partner — keeps Neon quota reserved for planning & reviews |
+| **Cross-Family Critic** | `critic-<short-slug>` | `inherit` (read-only) | **Opposite flagship pool:**<br>• Claude built → **Pool 1:** **`gemini-4-neon-high`** *(preferred; fallback `gemini-4-argon-high` if Pool 1 < 25%)*<br>• Argon/Gemini built → **Pool 4:** `claude-sub` (`opus`, `high`) or **Pool 2:** `claude-opus-5-5-high` | Stage 5 whole-branch adversarial review before merging into `epic/<epic-slug>` |
 
 > **Why `workspace: "share"` works seamlessly with `lean-runbook`:** `runbook.py` keys state by each
 > git worktree's `--show-toplevel` path, so every `share` worker automatically gets its own independent
@@ -61,7 +61,7 @@ across all **3 independent weekly quota pools** (see [quota-routing.md](./quota-
 Before dispatching a slice:
 - Verify dependencies are already merged into `epic/<epic-slug>`.
 - Verify target files are disjoint from any other currently running `slice-*` worker.
-- Pick the worker's model from the highest-remaining builder pool (**Pool 2** `claude-sonnet-5-5-medium` or **Pool 3** `gemini-4-argon-medium`, alternating across concurrent wave slots) and record its Builder/Critic pools on the Slice Board in `EPIC.md`.
+- Pick the worker's model from the highest-remaining builder pool (**Pool 4** `claude-sub` via `gemini-3.8-flash-low` relay, **Pool 2** `claude-sonnet-5-5-medium`, or **Pool 3** `gemini-4-argon-medium`, alternating across concurrent wave slots) and record its Builder/Critic pools on the Slice Board in `EPIC.md`.
 
 Then post this brief with `workspace: "share"`:
 
@@ -103,8 +103,8 @@ Follow `lean-runbook` strictly inside your worktree:
 
 ### C. Stage 5 Cross-Family Review & Landing a Completed Slice
 1. **Spawn Cross-Family Critic (`workspace: "inherit"`, read-only) on the strict opposite vendor:**
-   - If `slice-<short-slug>` ran on **Claude** (Pool 2) → pin **`gemini-4-argon-high`** (Pool 3).
-   - If `slice-<short-slug>` ran on **Argon** (Pool 3) or **Gemini** (Pool 1) → pin **`claude-opus-5-5-high`** (Pool 2; fallback `claude-sonnet-5-5-high`).
+   - If `slice-<short-slug>` ran on **Claude** (Pool 2 or Pool 4 `claude-sub`) → pin **`gemini-4-neon-high`** (Pool 1 preferred; fallback `gemini-4-argon-high` if Pool 1 < 25%).
+   - If `slice-<short-slug>` ran on **Argon** (Pool 3) or **Gemini** (Pool 1) → pin **Pool 4 `claude-sub` (`opus`, `high`)** or **`claude-opus-5-5-high`** (Pool 2; fallback `claude-sonnet-5-5-high`).
    - Confirm both exact models via `swarm(action="status")` — never silently fall back to same-vendor review; if `swarm` is unavailable, stop and alert the user.
    - **Important git tip for the critic brief:** Because `slice-<short-slug>` still holds `slice/<slice-slug>` checked out in its `share` worktree, tell `critic-<short-slug>` to inspect `git diff epic/<epic-slug>...slice/<slice-slug>` and `git log --oneline epic/<epic-slug>..slice/<slice-slug>` directly (or read files via `git show slice/<slice-slug>:<path>`), never `git checkout slice/<slice-slug>` (which fails with `already used by worktree`).
    - If the critic finds `blocker` or `high` issues, send those findings back to `@slice-<short-slug>` (still awake/waiting in its worktree!) for 1 targeted fix pass, then re-verify with `@critic-<short-slug>`.
