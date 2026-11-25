@@ -141,11 +141,16 @@ done
 
 # Registry: plugins come from .claude-plugin/marketplace.json (name|relative source).
 REGISTRY=()
-reg_out="$(python3 - "${REPO_DIR}" <<'PY'
-import json, sys
+reg_out="$(python3 -I - "${REPO_DIR}" <<'PY'
+import json, re, sys
 from pathlib import Path
+seen = set()
 for p in json.loads((Path(sys.argv[1]) / ".claude-plugin/marketplace.json").read_text())["plugins"]:
-    print(p["name"], p["source"].removeprefix("./"), sep="|")
+    n = p["name"]
+    if not (isinstance(n, str) and re.fullmatch(r"[a-z0-9][a-z0-9._-]*", n) and p["source"] == "./plugins/" + n and n not in seen):
+        sys.exit("invalid plugin entry in marketplace.json: %r" % (p,))
+    seen.add(n)
+    print(n, p["source"][2:], sep="|")
 PY
 )" || { echo "Registry: cannot read ${REPO_DIR}/.claude-plugin/marketplace.json" >&2; exit 1; }
 while IFS= read -r line; do [[ -n "${line}" ]] && REGISTRY+=("${line}"); done <<< "${reg_out}"
@@ -196,6 +201,14 @@ if [[ "${BIN_EXPLICIT}" -eq 1 ]]; then
   BIN_DEST="$(resolve_path_abs "${BIN_DEST}")"
 fi
 
+# Move dst into its own unique backup dir; fails if any step fails.
+backup_existing() {
+  local dst="$1" name="$2" root="${HOME}/.cache/ai-plugins-backups" dir
+  mkdir -p "${root}" && dir="$(mktemp -d "${root}/${name}.bak.XXXXXX")" && mv "${dst}" "${dir}/" \
+    || { echo "cannot back up ${dst}" >&2; return 1; }
+  echo "backed up existing ${dst} -> ${dir}/$(basename "${dst}")"
+}
+
 link_or_copy_dir() {
   local label="$1"
   local src="$2"
@@ -210,27 +223,21 @@ link_or_copy_dir() {
         echo "${label}: ${name} already linked -> ${src}"
         return 0
       fi
-      rm "${dst}"
+      rm "${dst}" || return 1
     elif [[ -e "${dst}" ]]; then
-      local backup_dir="${HOME}/.cache/ai-plugins-backups"
-      mkdir -p "${backup_dir}"
-      local backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
-      mv "${dst}" "${backup}"
-      echo "${label}: backed up existing ${dst} -> ${backup}"
+      echo -n "${label}: "
+      backup_existing "${dst}" "${name}" || return 1
     fi
-    ln -s "${src}" "${dst}"
+    ln -s "${src}" "${dst}" || return 1
     echo "${label}: linked ${dst} -> ${src}"
   else
     if [[ -L "${dst}" ]]; then
-      rm "${dst}"
+      rm "${dst}" || return 1
     elif [[ -e "${dst}" ]]; then
-      local backup_dir="${HOME}/.cache/ai-plugins-backups"
-      mkdir -p "${backup_dir}"
-      local backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
-      mv "${dst}" "${backup}"
-      echo "${label}: backed up existing ${dst} -> ${backup}"
+      echo -n "${label}: "
+      backup_existing "${dst}" "${name}" || return 1
     fi
-    cp -R "${src}" "${dst}"
+    cp -R "${src}" "${dst}" || return 1
     find "${dst}" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
     echo "${label}: copied ${src} -> ${dst}"
   fi
@@ -346,11 +353,8 @@ install_bin() {
       continue
     fi
     if [[ -L "${dst}" || -e "${dst}" ]]; then
-      local backup_dir="${HOME}/.cache/ai-plugins-backups"
-      mkdir -p "${backup_dir}" || return 1
-      local backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
-      mv "${dst}" "${backup}" || return 1
-      echo "Bin: backed up existing ${dst} -> ${backup}"
+      echo -n "Bin: "
+      backup_existing "${dst}" "${name}" || return 1
     fi
     # Always symlink, even under --copy: the launcher resolves the bundled
     # engine via Path(__file__).resolve().parents[1].
@@ -391,7 +395,7 @@ install_antigravity() {
     matches_filter "${name}" || continue
     mkdir -p "${AG_DEST}"
     dst="${AG_DEST}/${name}"
-    link_or_copy_dir "Antigravity" "${src}" "${dst}" "${name}"
+    link_or_copy_dir "Antigravity" "${src}" "${dst}" "${name}" || return 1
     installed=$((installed + 1))
   done
   TOTAL_INSTALLED=$((TOTAL_INSTALLED + installed))
@@ -494,7 +498,7 @@ install_skills() {
     fi
     src="${REPO_DIR}/${rel}"
     dst="${dest}/${skill}"
-    link_or_copy_dir "Skills" "${src}" "${dst}" "${skill}"
+    link_or_copy_dir "Skills" "${src}" "${dst}" "${skill}" || return 1
     installed=$((installed + 1))
     installed_names+=("${skill}")
   done
@@ -563,16 +567,13 @@ case "${ACTION}" in
     fi
     if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then install_antigravity || rc=1; fi
     if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then install_claude || rc=1; fi
-    if [[ "${BIN_EXPLICIT}" -eq 1 ]]; then
-      install_bin || rc=1
-    elif [[ "${BIN_AUTO}" -eq 1 ]]; then
-      install_bin || rc=1
-    fi
+    if [[ "${TARGET}" == "skills" ]]; then install_skills || rc=1; fi
     if [[ "${TARGET}" == "all" && -n "${ONLY_FILTER}" && "${TOTAL_INSTALLED}" -eq 0 ]]; then
       echo "No Antigravity or Claude Code plugins matched --only '${ONLY_FILTER}'" >&2
       rc=1
     fi
-    if [[ "${TARGET}" == "skills" ]]; then install_skills || rc=1; fi
+    # No bin writes when the explicit target failed (e.g. matched nothing).
+    if [[ "${rc}" -eq 0 ]]; then install_bin || rc=1; fi
     exit "${rc}"
     ;;
   uninstall)
@@ -581,6 +582,6 @@ case "${ACTION}" in
       if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then uninstall_claude; fi
       if [[ "${TARGET}" == "skills" ]]; then uninstall_skills; fi
     fi
-    if [[ "${WANT_BIN}" -eq 1 ]]; then uninstall_bin; fi
+    if [[ "${TARGET}" == "all" || "${BIN_EXPLICIT}" -eq 1 ]]; then uninstall_bin; fi
     ;;
 esac

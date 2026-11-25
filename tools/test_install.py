@@ -117,5 +117,75 @@ class TestInstallRegistry(Sandbox):
             self.assertIsNone(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text), f"literal name {n} in install.sh")
 
 
+class TestInstallFixes(Sandbox):
+    def fixture(self, plugins):
+        repo = self.tmp / "repo"
+        (repo / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / "install.sh", repo / "install.sh")
+        (repo / ".claude-plugin/marketplace.json").write_text(json.dumps({"plugins": plugins}))
+        self.repo = repo
+
+    def test_shim_and_skill_with_same_name_get_distinct_backups(self):
+        (self.home / ".local/bin").mkdir(parents=True)
+        (self.home / ".local/bin/lean-runbook").write_text("old shim")
+        old = self.home / ".codex/skills/lean-runbook"
+        old.mkdir(parents=True)
+        (old / "keep.txt").write_text("old skill")
+        r = self.install("--codex")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(old.resolve(), (registry()["lean-runbook"] / "skills/lean-runbook").resolve())
+        self.assertFalse((registry()["lean-runbook"] / "skills/lean-runbook/lean-runbook").exists())
+        found = sorted(p.read_text() for p in (self.home / ".cache/ai-plugins-backups").rglob("*") if p.is_file())
+        self.assertEqual(found, ["old shim", "old skill"])
+
+    def test_failed_backup_exits_nonzero_and_leaves_existing_dir(self):
+        backups = self.home / ".cache/ai-plugins-backups"
+        backups.mkdir(parents=True)
+        old = self.home / ".codex/skills/lean-runbook"
+        old.mkdir(parents=True)
+        (old / "keep.txt").write_text("old skill")
+        backups.chmod(0o500)
+        self.addCleanup(backups.chmod, 0o700)
+        r = self.install("--codex", "--only", "lean-runbook")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual((old / "keep.txt").read_text(), "old skill")
+        self.assertFalse(old.is_symlink())
+        self.assertNotIn("linked " + str(old), r.stdout)
+
+    def test_uninstalling_one_target_keeps_shared_shims(self):
+        self.assertEqual(self.install("--antigravity").returncode, 0)
+        for t in ("--antigravity", "--codex"):
+            self.assertEqual(self.install("--uninstall", t).returncode, 0)
+            self.assertEqual(self.names(self.home / ".local/bin"), ["lean-design", "lean-runbook", "swarmctl"])
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertEqual(self.names(self.home / ".local/bin"), [])
+
+    def test_target_that_matches_nothing_writes_no_shims(self):
+        r = self.install("--antigravity", "--only", "swarmctl")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no plugins matched", r.stderr)
+        self.assertEqual(self.names(self.home / ".local/bin"), [])
+
+    def test_invalid_registry_entries_fail_before_any_write(self):
+        bad = [{"name": "../../../pwned", "source": "./plugins/../../../pwned"},
+               {"name": "evil", "source": "./../outside/evil"},
+               {"name": "a\nb", "source": "./plugins/a\nb"},
+               {"name": "Up", "source": "./plugins/Up"},
+               {"name": "dup", "source": "./plugins/dup"}]
+        for entries in [[b] for b in bad[:4]] + [[bad[4], bad[4]]]:
+            with self.subTest(entries=entries):
+                self.fixture(entries)
+                r = self.install("--antigravity")
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("marketplace.json", r.stderr)
+                self.assertEqual(self.names(self.home), [])
+                self.assertFalse((self.home / "pwned").exists())
+
+    def test_registry_reader_ignores_python_modules_in_cwd(self):
+        (self.tmp / "json.py").write_text("open('planted-ran', 'w').close()\n")
+        self.install("--status")
+        self.assertFalse((self.tmp / "planted-ran").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
