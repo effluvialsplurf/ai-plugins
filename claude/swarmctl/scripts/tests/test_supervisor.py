@@ -25,7 +25,7 @@ from swarmctl import (
     get_adapter,
     run_supervisor_loop,
 )
-from swarmctl.supervisor import _is_pid_alive
+from swarmctl.supervisor import _is_pgid_alive, _is_pid_alive, _reap_pgid_step
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -56,10 +56,11 @@ class TestSupervisor(unittest.TestCase):
         p.chmod(0o755)
         return p
 
-    def test_cuj2_mid_turn_message_preserved_and_max_concurrent_enforced(self) -> None:
+    def test_cuj2_mid_turn_message_preserved_template_adapter_and_max_concurrent_enforced(self) -> None:
         self.store.init_swarm("default", str(self.root), max_concurrent=1, max_turns=10)
         self.store.add_worker("w1", "task 1")
-        self.store.add_worker("w2", "task 2")
+        # w2 uses TemplateAdapter ("custom") in unsafe mode to exercise TemplateAdapter via supervisor
+        self.store.add_worker("w2", "task 2", runner="custom", permission_mode="unsafe")
 
         log_dir = self.root / "logs"
         log_dir.mkdir()
@@ -82,40 +83,52 @@ class TestSupervisor(unittest.TestCase):
             f"        time.sleep(0.01)\n"
             f"print(json.dumps({{'session_id': f'sid-{{agent}}-{{idx}}', 'result': 'done'}}))\n",
         )
-        factory = lambda r: ClaudeAdapter(binary=str(stub))
+        old_custom = os.environ.get("SWARMCTL_CUSTOM_CMD")
+        os.environ["SWARMCTL_CUSTOM_CMD"] = str(stub)
+        try:
+            def factory(runner: str) -> object:
+                if runner == "claude":
+                    return ClaudeAdapter(binary=str(stub))
+                return get_adapter(runner)
 
-        mid_turn_obs: dict[str, object] = {}
+            mid_turn_obs: dict[str, object] = {}
 
-        def injector() -> None:
-            deadline = time.monotonic() + 5.0
-            while not flag_file.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            w1_mid = self.store.get_worker("w1")
-            w2_mid = self.store.get_worker("w2")
-            mid_turn_obs["w1_state"] = w1_mid["state"] if w1_mid else None
-            mid_turn_obs["w1_pid"] = w1_mid["pid"] if w1_mid else None
-            mid_turn_obs["w2_state"] = w2_mid["state"] if w2_mid else None
-            # Post message #3 mentioning @w1 while w1 is mid-turn
-            self.store.post_message("coordinator", "@w1 follow-up #3 mid-turn")
-            gate_file.write_text("go", encoding="utf-8")
+            def injector() -> None:
+                s2 = SwarmStore(self.db_path)
+                try:
+                    deadline = time.monotonic() + 5.0
+                    while not flag_file.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    w1_mid = s2.get_worker("w1")
+                    w2_mid = s2.get_worker("w2")
+                    mid_turn_obs["w1_state"] = w1_mid["state"] if w1_mid else None
+                    mid_turn_obs["w1_pid"] = w1_mid["pid"] if w1_mid else None
+                    mid_turn_obs["w2_state"] = w2_mid["state"] if w2_mid else None
+                    s2.post_message("coordinator", "@w1 follow-up #3 mid-turn")
+                    gate_file.write_text("go", encoding="utf-8")
+                finally:
+                    s2.close()
 
-        t = threading.Thread(target=injector)
-        t.start()
-        rc = run_supervisor_loop(
-            self.swarm_dir,
-            idle_timeout_sec=0.05,
-            tick_sec=0.01,
-            adapter_factory=factory,
-        )
-        t.join(timeout=5.0)
-        self.assertEqual(rc, 0)
+            t = threading.Thread(target=injector)
+            t.start()
+            rc = run_supervisor_loop(
+                self.swarm_dir,
+                idle_timeout_sec=0.05,
+                tick_sec=0.01,
+                adapter_factory=factory,
+            )
+            t.join(timeout=5.0)
+            self.assertEqual(rc, 0)
+        finally:
+            if old_custom is None:
+                os.environ.pop("SWARMCTL_CUSTOM_CMD", None)
+            else:
+                os.environ["SWARMCTL_CUSTOM_CMD"] = old_custom
 
-        # Verify max_concurrent=1 held w2 in waiting while w1 was working with a recorded PID
         self.assertEqual(mid_turn_obs.get("w1_state"), "working")
         self.assertIsNotNone(mid_turn_obs.get("w1_pid"))
         self.assertEqual(mid_turn_obs.get("w2_state"), "waiting")
 
-        # Verify w1 ran turn 0 on seq=1, then turn 1 on seq=3, and w2 ran turn 0 on seq=2
         w1_turn0 = (log_dir / "w1_0.txt").read_text(encoding="utf-8")
         self.assertIn('seq="1"', w1_turn0)
         self.assertNotIn('seq="3"', w1_turn0)
@@ -124,7 +137,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertNotIn('seq="1"', w1_turn1)
         self.assertTrue((log_dir / "w2_0.txt").exists())
 
-        # Both workers are now waiting with 0 active PIDs
         w1_final = self.store.get_worker("w1")
         w2_final = self.store.get_worker("w2")
         assert w1_final is not None and w2_final is not None
@@ -137,7 +149,7 @@ class TestSupervisor(unittest.TestCase):
         self.assertIsNone(w2_final["pid"])
         self.assertEqual(w2_final["turn_count"], 1)
 
-    def test_cuj3_fork_session_cleared_and_switch_model_applied(self) -> None:
+    def test_cuj3_fork_session_cross_cwd_seed_and_switch_model_applied(self) -> None:
         self.store.init_swarm("default", str(self.root))
         self.store.add_worker("parent", "parent brief", model="sonnet")
 
@@ -147,9 +159,9 @@ class TestSupervisor(unittest.TestCase):
             f"import json, os, sys\n"
             f"from pathlib import Path\n"
             f"agent = os.environ['SWARMCTL_AGENT']\n"
-            f"_ = sys.stdin.read()\n"
+            f"delta = sys.stdin.read()\n"
             f"with open({str(argv_log)!r}, 'a', encoding='utf-8') as f:\n"
-            f"    f.write(json.dumps({{'agent': agent, 'argv': sys.argv[1:]}}) + '\\n')\n"
+            f"    f.write(json.dumps({{'agent': agent, 'argv': sys.argv[1:], 'has_seed': '<transcript_seed>\\n' in delta}}) + '\\n')\n"
             f"print(json.dumps({{'session_id': f'sid-{{agent}}', 'result': 'ok'}}))\n",
         )
         factory = lambda r: ClaudeAdapter(binary=str(stub))
@@ -160,35 +172,53 @@ class TestSupervisor(unittest.TestCase):
         assert parent is not None
         self.assertEqual(parent["session_id"], "sid-parent")
 
-        # Fork child in same CWD -> turn 1 uses --resume sid-parent --fork-session
+        # 1) Same-CWD fork -> uses --resume sid-parent --fork-session, no <transcript_seed>
         child = self.store.add_worker("child", "forked task", model="sonnet", fork_from="parent")
         self.assertEqual(child["fork_session_id"], "sid-parent")
+        self.assertEqual(child["transcript_seed"], "")
+
+        # 2) Cross-CWD share fork -> uses <transcript_seed>, no --fork-session, cleared after turn 1
+        cross_dir = self.root / "share-cross"
+        cross_dir.mkdir()
+        child_cross = self.store.add_worker(
+            "child-cross", "cross task", workspace_mode="share", workspace_path=str(cross_dir), fork_from="parent"
+        )
+        self.assertEqual(child_cross["fork_session_id"], "")
+        self.assertTrue(child_cross["transcript_seed"])
+
         run_supervisor_loop(self.swarm_dir, idle_timeout_sec=0.03, tick_sec=0.01, adapter_factory=factory)
 
         child_after1 = self.store.get_worker("child")
-        assert child_after1 is not None
+        cross_after1 = self.store.get_worker("child-cross")
+        assert child_after1 is not None and cross_after1 is not None
         self.assertEqual(child_after1["fork_session_id"], "")
         self.assertEqual(child_after1["session_id"], "sid-child")
+        self.assertEqual(cross_after1["transcript_seed"], "")
 
         # Switch model on child while waiting, then trigger turn 2
         self.store.switch_model("child", "opus")
-        self.store.post_message("coordinator", "@child run turn 2 on opus")
+        self.store.post_message("coordinator", "@child @child-cross run turn 2")
         run_supervisor_loop(self.swarm_dir, idle_timeout_sec=0.03, tick_sec=0.01, adapter_factory=factory)
 
         records = [json.loads(ln) for ln in argv_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        child_runs = [r["argv"] for r in records if r["agent"] == "child"]
+        child_runs = [r for r in records if r["agent"] == "child"]
+        cross_runs = [r for r in records if r["agent"] == "child-cross"]
         self.assertEqual(len(child_runs), 2)
-        # Turn 1 had --resume sid-parent --fork-session and --model sonnet
-        self.assertIn("--fork-session", child_runs[0])
-        self.assertEqual(child_runs[0][child_runs[0].index("--resume") + 1], "sid-parent")
-        self.assertEqual(child_runs[0][child_runs[0].index("--model") + 1], "sonnet")
-        # Turn 2 had --resume sid-child, NO --fork-session, and --model opus
-        self.assertNotIn("--fork-session", child_runs[1])
-        self.assertEqual(child_runs[1][child_runs[1].index("--resume") + 1], "sid-child")
-        self.assertEqual(child_runs[1][child_runs[1].index("--model") + 1], "opus")
+        self.assertEqual(len(cross_runs), 2)
 
-    def test_edge2_killing_reaps_entire_pgid_and_handles_clean_vs_dirty_worktree(self) -> None:
-        # Initialize real git repo for WorkspaceManager share worktrees
+        # Same-CWD turn 1 vs turn 2
+        self.assertIn("--fork-session", child_runs[0]["argv"])
+        self.assertFalse(child_runs[0]["has_seed"])
+        self.assertEqual(child_runs[0]["argv"][child_runs[0]["argv"].index("--model") + 1], "sonnet")
+        self.assertNotIn("--fork-session", child_runs[1]["argv"])
+        self.assertEqual(child_runs[1]["argv"][child_runs[1]["argv"].index("--model") + 1], "opus")
+
+        # Cross-CWD turn 1 injected <transcript_seed>; turn 2 did not
+        self.assertNotIn("--fork-session", cross_runs[0]["argv"])
+        self.assertTrue(cross_runs[0]["has_seed"])
+        self.assertFalse(cross_runs[1]["has_seed"])
+
+    def test_edge2_killing_reaps_entire_pgid_orphan_killing_and_clean_vs_dirty_worktree(self) -> None:
         _git(self.root, "init")
         (self.root / "README.md").write_text("hello\n", encoding="utf-8")
         _git(self.root, "add", "README.md")
@@ -201,19 +231,22 @@ class TestSupervisor(unittest.TestCase):
         wt_dirty, br_dirty = wm.create(self.root, self.swarm_dir, "w-dirty", "share", swarm_id="default")
 
         self.store.add_worker(
-            "w-clean",
-            "clean worktree worker",
-            workspace_mode="share",
-            workspace_path=str(wt_clean),
-            branch_name=br_clean,
+            "w-clean", "clean worktree worker", workspace_mode="share", workspace_path=str(wt_clean), branch_name=br_clean
         )
         self.store.add_worker(
-            "w-dirty",
-            "dirty worktree worker",
-            workspace_mode="share",
-            workspace_path=str(wt_dirty),
-            branch_name=br_dirty,
+            "w-dirty", "dirty worktree worker", workspace_mode="share", workspace_path=str(wt_dirty), branch_name=br_dirty
         )
+        # Also test Step 1 orphan 'killing' worker (not in active, with a real detached PGID)
+        orphan_proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        self.store.add_worker("w-orphan-kill", "orphan killing worker")
+        with self.store._write_tx() as conn:
+            conn.execute(
+                "UPDATE workers SET state = 'killing', pid = ? WHERE name = 'w-orphan-kill'",
+                (orphan_proc.pid,),
+            )
 
         pids_dir = self.root / "pids"
         pids_dir.mkdir()
@@ -261,7 +294,14 @@ class TestSupervisor(unittest.TestCase):
         t.join(timeout=5.0)
         self.assertEqual(rc, 0)
 
-        # Verify both parent and child processes in both PGIDs were completely reaped
+        # Reap our local Popen handle for orphan_proc
+        orphan_proc.poll()
+        self.assertFalse(_is_pid_alive(orphan_proc.pid))
+        w_ok = self.store.get_worker("w-orphan-kill")
+        assert w_ok is not None
+        self.assertEqual(w_ok["state"], "killed")
+        self.assertIsNone(w_ok["pid"])
+
         for agent in ("w-clean", "w-dirty"):
             raw = (pids_dir / f"{agent}.pids").read_text(encoding="utf-8")
             parent_pid, child_pid = [int(x) for x in raw.split(",")]
@@ -272,7 +312,6 @@ class TestSupervisor(unittest.TestCase):
             self.assertEqual(w["state"], "killed")
             self.assertIsNone(w["pid"])
 
-        # Clean worktree was removed; dirty worktree was preserved with a [dirty-worktree] notice (without @w-dirty)
         self.assertFalse(wt_clean.exists())
         self.assertTrue(wt_dirty.exists())
         self.assertTrue((wt_dirty / "uncommitted.txt").exists())
@@ -286,14 +325,17 @@ class TestSupervisor(unittest.TestCase):
     def test_edge2_crash_recovery_orphan_dead_pid_and_adapter_permission_error(self) -> None:
         self.store.init_swarm("default", str(self.root), max_concurrent=4)
 
-        # 1) Non-zero exit worker
         self.store.add_worker("w-crash", "will exit 2")
-        # 2) Unmapped permission mode on opencode (readonly -> PermissionError)
         self.store.add_worker("w-perm", "opencode readonly", runner="opencode", permission_mode="readonly")
-        # 3) Orphan dead PID already in working state
+
+        # Freshly exited subprocess PID instead of hardcoded 999999
+        dead_proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead_proc.wait(timeout=5.0)
+        dead_pid = dead_proc.pid
+
         self.store.add_worker("w-orphan", "orphan task")
         with self.store._write_tx() as conn:
-            conn.execute("UPDATE workers SET state = 'working', pid = 999999 WHERE name = 'w-orphan'")
+            conn.execute("UPDATE workers SET state = 'working', pid = ? WHERE name = 'w-orphan'", (dead_pid,))
 
         crash_stub = self._make_stub(
             "stub_crash.py",
@@ -305,7 +347,6 @@ class TestSupervisor(unittest.TestCase):
                 return ClaudeAdapter(binary=str(crash_stub))
             return get_adapter(runner)
 
-        # Run supervisor until idle; none of the 3 workers should crash-loop
         rc = run_supervisor_loop(
             self.swarm_dir,
             idle_timeout_sec=0.05,
@@ -318,7 +359,7 @@ class TestSupervisor(unittest.TestCase):
         for name, expected_err_substr in [
             ("w-crash", "fatal crash"),
             ("w-perm", "does not support enforced 'readonly' guardrails"),
-            ("w-orphan", "Orphan worker PID 999999 died unexpectedly"),
+            ("w-orphan", f"Orphan worker PID {dead_pid} died unexpectedly"),
         ]:
             w = self.store.get_worker(name)
             assert w is not None
@@ -332,33 +373,55 @@ class TestSupervisor(unittest.TestCase):
         self.store.init_swarm("default", str(self.root))
         lock_path = self.swarm_dir / "supervisor.lock"
 
-        # 1) When lock is already held exclusively, run_supervisor_loop returns 0 immediately
-        #    and ensure_supervisor returns None
+        # 1) When lock is held exclusively, run_supervisor_loop returns 0 and ensure_supervisor returns None
         with open(lock_path, "a+", encoding="utf-8") as lock_f:
             fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(run_supervisor_loop(self.swarm_dir, idle_timeout_sec=0.01, tick_sec=0.01), 0)
             self.assertIsNone(ensure_supervisor(self.swarm_dir, idle_timeout_sec=0.05, tick_sec=0.01))
             fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
 
-        # 2) When unlocked, ensure_supervisor spawns a detached supervisor that acquires the lock and exits after idle
-        pid = ensure_supervisor(self.swarm_dir, idle_timeout_sec=0.05, tick_sec=0.01)
-        self.assertIsNotNone(pid)
-        assert pid is not None and pid > 0
-        deadline = time.monotonic() + 5.0
-        while _is_pid_alive(pid) and time.monotonic() < deadline:
-            time.sleep(0.02)
-        self.assertFalse(_is_pid_alive(pid))
-        # supervisor.lock is NEVER unlinked
-        self.assertTrue(lock_path.exists())
-
-        # 3) Unlock-check-relock race hook: inject work inside on_before_unlock_check
-        self.store.add_worker("w1", "initial task")
+        # 2) Queue real work for a custom runner and verify ensure_supervisor's detached daemon processes it
         stub = self._make_stub(
-            "stub_race.py",
-            "import json, sys\n_ = sys.stdin.read()\nprint(json.dumps({'session_id': 's1', 'result': 'ok'}))\n",
+            "stub_daemon.py",
+            "import json, sys\n_ = sys.stdin.read()\nprint(json.dumps({'session_id': 's-daemon', 'result': 'ok'}))\n",
         )
-        factory = lambda r: ClaudeAdapter(binary=str(stub))
+        old_custom = os.environ.get("SWARMCTL_CUSTOM_CMD")
+        os.environ["SWARMCTL_CUSTOM_CMD"] = str(stub)
+        try:
+            self.store.add_worker("w-daemon", "daemon task", runner="custom", permission_mode="unsafe")
+            pid = ensure_supervisor(self.swarm_dir, idle_timeout_sec=0.05, tick_sec=0.01)
+            self.assertIsNotNone(pid)
+            assert pid is not None and pid > 0
+            deadline = time.monotonic() + 5.0
+            while _is_pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertFalse(_is_pid_alive(pid))
+            self.assertTrue(lock_path.exists())
+            w_daemon = self.store.get_worker("w-daemon")
+            assert w_daemon is not None
+            self.assertEqual(w_daemon["turn_count"], 1)
+            self.assertEqual(w_daemon["state"], "waiting")
+        finally:
+            if old_custom is None:
+                os.environ.pop("SWARMCTL_CUSTOM_CMD", None)
+            else:
+                os.environ["SWARMCTL_CUSTOM_CMD"] = old_custom
 
+        # 3) Verify `python3 -m swarmctl.supervisor --help` emits zero runpy RuntimeWarnings on stderr (N10)
+        scripts_root = str(Path(__file__).resolve().parents[1])
+        env = {**os.environ, "PYTHONPATH": scripts_root}
+        help_res = subprocess.run(
+            [sys.executable, "-m", "swarmctl.supervisor", "--help"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(help_res.stderr, "")
+
+        # 4) Unlock-check-relock race hook
+        self.store.add_worker("w1", "initial task")
+        factory = lambda r: ClaudeAdapter(binary=str(stub))
         hook_fired = {"count": 0}
 
         def race_hook() -> None:
@@ -377,7 +440,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(hook_fired["count"], 1)
         w1 = self.store.get_worker("w1")
         assert w1 is not None
-        # Turn 1 processed initial brief (#1), Turn 2 processed race message (#2) after relocking!
         self.assertEqual(w1["turn_count"], 2)
         self.assertEqual(w1["state"], "waiting")
 
@@ -398,7 +460,6 @@ class TestSupervisor(unittest.TestCase):
         )
         factory = lambda r: ClaudeAdapter(binary=str(stub))
 
-        # Run tick until initial turns finish / timeout
         rc = run_supervisor_loop(
             self.swarm_dir,
             idle_timeout_sec=0.05,
@@ -409,10 +470,7 @@ class TestSupervisor(unittest.TestCase):
         )
         self.assertEqual(rc, 0)
 
-        # 1) Self-mention by w-self (@w-self) must NOT wake w-self
         self.store.post_message("w-self", "@w-self note to self", token=w_self["worker_token"])
-        # Verify w-self also ignores its own @all post by temporarily keeping w-timeout/w-max out of @all or testing w-self in isolation:
-        # Trigger w-max's 2nd turn so w-max hits max_turns=2
         self.store.post_message("coordinator", "@w-max second turn to hit max_turns")
 
         rc2 = run_supervisor_loop(
@@ -425,13 +483,11 @@ class TestSupervisor(unittest.TestCase):
         )
         self.assertEqual(rc2, 0)
 
-        # w-self stayed at turn_count == 1
         w_self_row = self.store.get_worker("w-self")
         assert w_self_row is not None
         self.assertEqual(w_self_row["turn_count"], 1)
         self.assertEqual(w_self_row["state"], "waiting")
 
-        # w-timeout halted at turn_count == 1 in state 'stopped'
         w_to_row = self.store.get_worker("w-timeout")
         assert w_to_row is not None
         self.assertEqual(w_to_row["state"], "stopped")
@@ -439,7 +495,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(w_to_row["turn_count"], 1)
         self.assertIn("Turn exceeded timeout", w_to_row["last_error"])
 
-        # w-max halted at turn_count == 2 (never 3!) in state 'stopped'
         w_max_row = self.store.get_worker("w-max")
         assert w_max_row is not None
         self.assertEqual(w_max_row["state"], "stopped")
@@ -447,7 +502,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(w_max_row["turn_count"], 2)
         self.assertIn("Reached max_turns (2)", w_max_row["last_error"])
 
-        # Both circuit-breaker system notices were posted without @mentions
         msgs = self.store.read_board(since=0, limit=50)["messages"]
         cb_msgs = [m for m in msgs if m["sender"] == "system" and "[circuit-breaker]" in m["body"]]
         self.assertEqual(len(cb_msgs), 2)
@@ -470,6 +524,72 @@ class TestSupervisor(unittest.TestCase):
         w_self_after_all = self.store.get_worker("w-self")
         assert w_self_after_all is not None
         self.assertEqual(w_self_after_all["turn_count"], 1)
+
+    def test_regressions_pgid_nonleader_external_killed_and_poll_before_timeout(self) -> None:
+        # H1: When proc is None and PID is a live non-leader process in our own PGID (so killpg(pid, 0)
+        # raises ProcessLookupError while kill(pid, 0) succeeds), _is_pgid_alive returns False (no livelock).
+        non_leader = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+        try:
+            self.assertNotEqual(os.getpgid(non_leader.pid), non_leader.pid)
+            self.assertFalse(_is_pgid_alive(non_leader.pid, None))
+            dead, _ = _reap_pgid_step(non_leader.pid, None, None, time.monotonic(), 0.1)
+            self.assertTrue(dead)
+        finally:
+            non_leader.terminate()
+            non_leader.wait(timeout=5.0)
+
+        # M4 & M5:
+        # - w-fast exits 0 immediately even with turn_timeout_sec=0.001, and because proc.poll() is checked
+        #   before timeout when tick runs, it completes cleanly (state='waiting') rather than timing out.
+        # - w-ext-killed is marked 'killed' externally while active, and supervisor reaps it & exits cleanly.
+        self.store.init_swarm("default", str(self.root), max_concurrent=4)
+        self.store.add_worker("w-fast", "fast worker")
+        self.store.add_worker("w-ext-killed", "externally killed worker")
+
+        ext_flag = self.root / "ext_started"
+        stub = self._make_stub(
+            "stub_reg.py",
+            f"import json, os, sys, time\n"
+            f"from pathlib import Path\n"
+            f"_ = sys.stdin.read()\n"
+            f"agent = os.environ['SWARMCTL_AGENT']\n"
+            f"if agent == 'w-ext-killed':\n"
+            f"    Path({str(ext_flag)!r}).write_text('1', encoding='utf-8')\n"
+            f"    time.sleep(30)\n"
+            f"print(json.dumps({{'session_id': f'sid-{{agent}}', 'result': 'ok'}}))\n",
+        )
+        factory = lambda r: ClaudeAdapter(binary=str(stub))
+
+        def ext_killer() -> None:
+            s2 = SwarmStore(self.db_path)
+            try:
+                deadline = time.monotonic() + 5.0
+                while not ext_flag.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                # Directly mark killed (skipping killing) to test M4 Step 3 external killed cleanup
+                s2.mark_killed("w-ext-killed")
+            finally:
+                s2.close()
+
+        t = threading.Thread(target=ext_killer)
+        t.start()
+        rc = run_supervisor_loop(
+            self.swarm_dir,
+            idle_timeout_sec=0.05,
+            tick_sec=0.05,
+            turn_timeout_sec=0.04,
+            kill_grace_sec=0.02,
+            adapter_factory=factory,
+        )
+        t.join(timeout=5.0)
+        self.assertEqual(rc, 0)
+
+        w_fast = self.store.get_worker("w-fast")
+        w_ext = self.store.get_worker("w-ext-killed")
+        assert w_fast is not None and w_ext is not None
+        self.assertEqual(w_fast["state"], "waiting")
+        self.assertEqual(w_fast["turn_count"], 1)
+        self.assertEqual(w_ext["state"], "killed")
 
 
 if __name__ == "__main__":

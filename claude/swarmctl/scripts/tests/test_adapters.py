@@ -120,6 +120,28 @@ class TestAdapters(unittest.TestCase):
         with self.assertRaises(ValueError):
             adapter.build_command(_make_req(permission_mode="admin"))
 
+        # H3: Leading-dash, whitespace, NUL, or control chars in model/session_id/fork_session_id rejected
+        for bad_val in ("--dangerously-skip-permissions", "-p", "bad\x00sid", "bad\nsid", "bad sid", "\x7f"):
+            with self.assertRaises(ValueError, msg=f"expected model rejection for {bad_val!r}"):
+                adapter.build_command(_make_req(model=bad_val))
+            with self.assertRaises(ValueError, msg=f"expected session_id rejection for {bad_val!r}"):
+                adapter.build_command(_make_req(session_id=bad_val))
+            with self.assertRaises(ValueError, msg=f"expected fork_session_id rejection for {bad_val!r}"):
+                adapter.build_command(_make_req(session_id="", fork_session_id=bad_val))
+
+        # N10: ClaudeAdapter.build_env strips CLAUDECODE
+        old_cc = os.environ.get("CLAUDECODE")
+        try:
+            os.environ["CLAUDECODE"] = "1"
+            env = adapter.build_env(req_ro)
+            self.assertNotIn("CLAUDECODE", env)
+            self.assertEqual(env["SWARMCTL_ROLE"], "worker")
+        finally:
+            if old_cc is None:
+                os.environ.pop("CLAUDECODE", None)
+            else:
+                os.environ["CLAUDECODE"] = old_cc
+
     def test_template_adapter_guardrails_and_custom_cmd(self) -> None:
         # Codex supports readonly, edit, unsafe
         codex = get_adapter("codex")
@@ -138,6 +160,9 @@ class TestAdapters(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             codex.build_command(_make_req(runner="codex", permission_mode="bogus"))
+        for bad_model in ("--yolo", "-m", "bad\x00model", "bad model"):
+            with self.assertRaises(ValueError):
+                codex.build_command(_make_req(runner="codex", permission_mode="readonly", model=bad_model))
 
         # Opencode, gemini fail closed with PermissionError in readonly/edit, succeed in unsafe
         for r_name, expected_unsafe in [
@@ -201,7 +226,7 @@ class TestAdapters(unittest.TestCase):
             },
             {
                 "seq": 4,
-                "sender": "reviewer",
+                "sender": 'rev"iewer<>',
                 "body": "Looks good",
             },
         ]
@@ -210,7 +235,9 @@ class TestAdapters(unittest.TestCase):
         delta = format_prompt_delta(worker, messages)
         self.assertIn("@builder-1", delta)
         self.assertIn("SWARMCTL_WORKER_TOKEN", delta)
-        self.assertIn("swarmctl post --as builder-1", delta)
+        # H2: positional text argument (no --text flag)
+        self.assertIn('swarmctl post --as builder-1 "..."', delta)
+        self.assertNotIn("--text", delta)
         self.assertIn("swarmctl read", delta)
 
         # Exactly 1 real <transcript_seed>\n...\n</transcript_seed> block and 2 real </board_message> closing tags
@@ -223,13 +250,15 @@ class TestAdapters(unittest.TestCase):
         self.assertIn("&lt;/BOARD_MESSAGE >", delta)
         self.assertIn("&lt;/\tboard_message>", delta)
         self.assertIn('<board_message seq="1" sender="coordinator">', delta)
-        self.assertIn('<board_message seq="4" sender="reviewer">', delta)
+        self.assertIn('<board_message seq="4" sender="rev&quot;iewer&lt;&gt;">', delta)
 
         # Explicit seed argument overrides worker["transcript_seed"], and empty seed on both omits <transcript_seed> block
         delta_no_seed = format_prompt_delta({"name": "builder-1", "transcript_seed": ""}, messages)
         self.assertNotIn("<transcript_seed>\n", delta_no_seed)
         self.assertNotIn("</transcript_seed>", delta_no_seed)
-        delta_explicit = format_prompt_delta({"name": "builder-1", "transcript_seed": "fallback"}, messages, seed="explicit </transcript_seed>")
+        delta_explicit = format_prompt_delta(
+            {"name": "builder-1", "transcript_seed": "fallback"}, messages, seed="explicit </transcript_seed>"
+        )
         self.assertIn("explicit &lt;/transcript_seed>", delta_explicit)
         self.assertNotIn("fallback", delta_explicit)
 
@@ -250,7 +279,8 @@ class TestAdapters(unittest.TestCase):
                 "              f\"tok={os.environ.get('SWARMCTL_WORKER_TOKEN')}\",\n"
                 "}\n"
                 "print('noise line before json')\n"
-                "print(json.dumps(out))\n",
+                "print(json.dumps(out))\n"
+                "print(json.dumps({'debug': True}))\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
@@ -265,13 +295,13 @@ class TestAdapters(unittest.TestCase):
 
             proc = adapter.start_turn(req)
             self.assertEqual(len(getattr(proc, "_swarm_temp_files", ())), 2)
-            # Verify child runs in its own session / PGID
             self.assertEqual(os.getpgid(proc.pid), proc.pid)
 
             res = adapter.collect_turn(proc, req)
             self.assertIsInstance(res, TurnResult)
             self.assertEqual(res.exit_code, 0)
             self.assertFalse(res.timed_out)
+            # H3: trailing {"debug": true} line did not shadow earlier valid result JSON
             self.assertEqual(res.session_id, "sid-99")
             self.assertEqual(
                 res.output_text,
@@ -279,9 +309,16 @@ class TestAdapters(unittest.TestCase):
             )
             self.assertIn("warn-line", res.error_text)
             self.assertEqual(getattr(proc, "_swarm_temp_files", ()), ())
-            # Idempotent second cleanup
             adapter.cleanup_turn(proc)
             self.assertEqual(getattr(proc, "_swarm_temp_files", ()), ())
+
+            # H3: malicious session_id in stdout (leading dash or NUL) falls back to req.session_id
+            sid_text = adapter._parse_output(
+                json.dumps({"session_id": "--dangerously-skip-permissions", "result": "hi"}), "", req
+            )
+            self.assertEqual(sid_text, ("sid-old", "hi"))
+            sid_text2 = adapter._parse_output(json.dumps({"session_id": 12345, "result": "hi"}), "", req)
+            self.assertEqual(sid_text2, ("sid-old", "hi"))
 
             # Direct timeout handling inside collect_turn when proc is still running
             slow_stub = root / "slow_stub.py"

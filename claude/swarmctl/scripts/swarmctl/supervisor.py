@@ -1,7 +1,7 @@
 """Single-instance flock-locked lazy local supervisor (`ADR-3`, `INV-2..6`, `D5..D8`)."""
 from __future__ import annotations
 
-import argparse, fcntl, os, signal, subprocess, sys, time
+import argparse, fcntl, json, os, signal, subprocess, sys, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -73,14 +73,28 @@ def _pgid_has_only_zombies(pgid: int) -> bool:
 def _is_pgid_alive(pid: int, proc: subprocess.Popen[bytes] | None) -> bool:
     if proc is not None:
         proc.poll()
-    _reap_zombie_pid(pid)
+    if proc is None or proc.returncode is not None:
+        _reap_zombie_pid(pid)
     try:
         os.killpg(pid, 0)
     except PermissionError:
-        return True
+        return proc is not None and proc.poll() is None
     except (ProcessLookupError, OSError):
-        return _is_pid_alive(pid)
+        return proc is not None and proc.poll() is None and _is_pid_alive(pid)
     return not (not _is_pid_alive(pid) and _pgid_has_only_zombies(pid))
+
+
+def _signal_pgid(pid: int, proc: subprocess.Popen[bytes] | None, sig: int) -> None:
+    try:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
+        if proc is not None and proc.poll() is None:
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, OSError):
+                pass
+    except OSError:
+        pass
 
 
 def _reap_pgid_step(
@@ -89,16 +103,10 @@ def _reap_pgid_step(
     if not _is_pgid_alive(pid, proc):
         return True, (term_sent_at or now)
     if term_sent_at is None:
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
+        _signal_pgid(pid, proc, signal.SIGTERM)
         term_sent_at = now
     elif now - term_sent_at >= kill_grace_sec:
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
+        _signal_pgid(pid, proc, signal.SIGKILL)
     return (not _is_pgid_alive(pid, proc)), term_sent_at
 
 
@@ -124,7 +132,7 @@ def ensure_supervisor(
     swarm_dir: Path | str, *, idle_timeout_sec: float = 60.0, tick_sec: float = 0.25,
     turn_timeout_sec: float = 900.0, kill_grace_sec: float = 3.0,
 ) -> int | None:
-    sdir = Path(swarm_dir)
+    sdir = Path(swarm_dir).resolve()
     sdir.mkdir(parents=True, exist_ok=True)
     lock_f = open(sdir / "supervisor.lock", "a+", encoding="utf-8")
     try:
@@ -139,17 +147,22 @@ def ensure_supervisor(
     env = dict(os.environ)
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{scripts_root}{os.pathsep}{existing_pp}" if existing_pp else scripts_root
-    cmd = [
-        sys.executable, "-m", "swarmctl.supervisor", "--swarm-dir", str(sdir),
+    target_cmd = [
+        sys.executable, "-m", "swarmctl.supervisor", f"--swarm-dir={sdir}",
         "--idle-timeout", str(idle_timeout_sec), "--tick-sec", str(tick_sec),
         "--turn-timeout", str(turn_timeout_sec), "--kill-grace", str(kill_grace_sec),
     ]
-    proc = subprocess.Popen(
-        cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True, close_fds=True,
+    trampoline = (
+        "import json, subprocess, sys; "
+        "p = subprocess.Popen(json.loads(sys.argv[1]), stdin=subprocess.DEVNULL, "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True); "
+        "p._child_created = False; print(p.pid)"
     )
-    proc._child_created = False  # type: ignore[attr-defined]
-    return int(proc.pid)
+    res = subprocess.run(
+        [sys.executable, "-c", trampoline, json.dumps(target_cmd)],
+        env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+    )
+    return int(res.stdout.strip())
 
 
 def run_supervisor_loop(
@@ -158,7 +171,7 @@ def run_supervisor_loop(
     adapter_factory: Callable[[str], Any] = get_adapter, workspace_manager: WorkspaceManager | None = None,
     max_ticks: int | None = None, on_before_unlock_check: Callable[[], None] | None = None,
 ) -> int:
-    sdir = Path(swarm_dir)
+    sdir = Path(swarm_dir).resolve()
     sdir.mkdir(parents=True, exist_ok=True)
     lock_f = open(sdir / "supervisor.lock", "a+", encoding="utf-8")
     try:
@@ -167,7 +180,8 @@ def run_supervisor_loop(
         except BlockingIOError:
             return 0
         store, wm = SwarmStore(sdir / "board.db"), (workspace_manager or WorkspaceManager())
-        active, orphan_killing_term_at = {}, {}
+        active: dict[str, _ActiveTurn] = {}
+        orphan_killing_term_at: dict[str, float] = {}
         idle_since, ticks = None, 0
         try:
             while True:
@@ -195,7 +209,7 @@ def run_supervisor_loop(
                     if w["workspace_mode"] == "share":
                         try:
                             wm.remove(meta["repo_root"], w["workspace_path"], w["branch_name"], "share", force=False)
-                        except RuntimeError as exc:
+                        except (RuntimeError, ValueError, OSError) as exc:
                             store.post_message("system", f"[dirty-worktree] worker {name} preserved dirty worktree at {w['workspace_path']}: {exc}")
                     store.mark_killed(name)
 
@@ -205,19 +219,19 @@ def run_supervisor_loop(
 
                 for name, turn in list(active.items()):
                     w_curr = store.get_worker(name)
-                    if w_curr is None or w_curr["state"] in ("killing", "killed"):
+                    if w_curr is not None and w_curr["state"] == "killing":
                         continue
-                    if now - turn.started_at >= float(turn.req.timeout_sec):
+                    if w_curr is None or w_curr["state"] == "killed":
                         dead, turn.term_sent_at = _reap_pgid_step(turn.proc.pid, turn.proc, turn.term_sent_at, now, kill_grace_sec)
-                        if not dead:
-                            continue
-                        active.pop(name, None)
-                        turn.adapter.cleanup_turn(turn.proc)
-                        store.mark_stopped(name, turn.req.delivered_max_seq, error=f"Turn exceeded timeout ({turn.req.timeout_sec}s)")
-                        store.post_message("system", f"[circuit-breaker] worker {name} halted: turn exceeded timeout ({turn.req.timeout_sec}s)")
-                    elif turn.proc.poll() is not None:
+                        if dead:
+                            active.pop(name, None)
+                            turn.adapter.cleanup_turn(turn.proc)
+                        continue
+                    if turn.term_sent_at is None and turn.proc.poll() is not None:
                         active.pop(name, None)
                         res = turn.adapter.collect_turn(turn.proc, turn.req, timed_out=False)
+                        _signal_pgid(turn.proc.pid, None, signal.SIGKILL)
+                        _reap_zombie_pid(turn.proc.pid)
                         if res.exit_code == 0:
                             max_turns = int(store.get_meta()["max_turns"])
                             if turn.before_turn_count + 1 >= max_turns:
@@ -228,6 +242,14 @@ def run_supervisor_loop(
                         else:
                             err = (res.error_text.strip() or f"Runner exited with code {res.exit_code}")[:500]
                             store.mark_stopped(name, turn.req.delivered_max_seq, error=err)
+                    elif now - turn.started_at >= float(turn.req.timeout_sec):
+                        dead, turn.term_sent_at = _reap_pgid_step(turn.proc.pid, turn.proc, turn.term_sent_at, now, kill_grace_sec)
+                        if not dead:
+                            continue
+                        active.pop(name, None)
+                        turn.adapter.cleanup_turn(turn.proc)
+                        store.mark_stopped(name, turn.req.delivered_max_seq, error=f"Turn exceeded timeout ({turn.req.timeout_sec}s)")
+                        store.post_message("system", f"[circuit-breaker] worker {name} halted: turn exceeded timeout ({turn.req.timeout_sec}s)")
 
                 for w in store.claim_runnable_workers():
                     w_name = w["name"]
@@ -240,12 +262,23 @@ def run_supervisor_loop(
                         prompt_delta=format_prompt_delta(w, msgs), delivered_max_seq=int(w["delivered_max_seq"]),
                         timeout_sec=float(turn_timeout_sec),
                     )
+                    proc: subprocess.Popen[bytes] | None = None
+                    adapter: BaseAdapter | None = None
                     try:
                         adapter = adapter_factory(req.runner)
                         proc = adapter.start_turn(req)
                         store.set_worker_pid(w_name, proc.pid)
                         active[w_name] = _ActiveTurn(req=req, adapter=adapter, proc=proc, started_at=time.monotonic(), before_turn_count=int(w["turn_count"]))
-                    except (PermissionError, ValueError, OSError) as exc:
+                    except (PermissionError, ValueError, OSError, BaseException) as exc:
+                        if proc is not None and adapter is not None:
+                            _signal_pgid(proc.pid, proc, signal.SIGKILL)
+                            try:
+                                proc.wait(timeout=1.0)
+                            except subprocess.TimeoutExpired:
+                                pass
+                            adapter.cleanup_turn(proc)
+                        if not isinstance(exc, (PermissionError, ValueError, OSError)):
+                            raise
                         store.mark_stopped(w_name, req.delivered_max_seq, error=str(exc)[:500])
 
                 if not active and not _has_pending_work(store):
@@ -270,6 +303,8 @@ def run_supervisor_loop(
                     return 0
                 time.sleep(tick_sec)
         finally:
+            for turn in list(active.values()):
+                turn.adapter.cleanup_turn(turn.proc)
             store.close()
     finally:
         lock_f.close()
