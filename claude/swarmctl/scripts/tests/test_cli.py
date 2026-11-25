@@ -725,6 +725,66 @@ class TestCli(unittest.TestCase):
         self.assertIn("MCP server is not available yet", err)
         self.assertNotIn("Traceback", err)
 
+    def test_module_entrypoint_and_symlinked_bin_launcher_without_pythonpath(self) -> None:
+        scripts_root = Path(__file__).resolve().parents[1]
+        bin_path = scripts_root / "bin" / "swarmctl"
+
+        # 1. python3 -m swarmctl models --json succeeds with PYTHONPATH=claude/swarmctl/scripts
+        mod_env = {**os.environ, "PYTHONPATH": str(scripts_root)}
+        res_mod = subprocess.run(
+            [sys.executable, "-m", "swarmctl", "models", "--json"],
+            env=mod_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_mod.returncode, 0, res_mod.stderr)
+        self.assertEqual(json.loads(res_mod.stdout)["default_runner"], "claude")
+
+        # 2. Executable bit check on bin/swarmctl
+        self.assertTrue(bin_path.is_file(), f"Missing {bin_path}")
+        self.assertTrue(os.access(bin_path, os.X_OK), f"{bin_path} is not executable")
+
+        # 3. Real symlink in temp dir -> bin/swarmctl invoked without PYTHONPATH
+        sym_dir = Path(self.tmp.name) / "usr_local_bin"
+        sym_dir.mkdir()
+        sym_bin = sym_dir / "swarmctl"
+        sym_bin.symlink_to(bin_path)
+
+        clean_env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+
+        def _run_sym(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [str(sym_bin), "--repo", str(self.repo), *args],
+                env=clean_env,
+                cwd=str(sym_dir),
+                capture_output=True,
+                text=True,
+            )
+
+        r_models = _run_sym("models", "--json")
+        self.assertEqual(r_models.returncode, 0, r_models.stderr)
+        self.assertEqual(json.loads(r_models.stdout)["default_runner"], "claude")
+
+        r_init = _run_sym("init", "--title", "Symlink Swarm", "--json")
+        self.assertEqual(r_init.returncode, 0, r_init.stderr)
+        self.assertEqual(json.loads(r_init.stdout)["title"], "Symlink Swarm")
+
+        r_add = _run_sym("add", "wsym", "--brief", "symlink worker", "--no-wake", "--json")
+        self.assertEqual(r_add.returncode, 0, r_add.stderr)
+        w_sym = json.loads(r_add.stdout)
+        self.assertEqual(w_sym["name"], "wsym")
+        self.assertNotIn("worker_token", w_sym)
+
+        r_post = _run_sym("post", "hello via symlink", "--no-wake", "--json")
+        self.assertEqual(r_post.returncode, 0, r_post.stderr)
+        self.assertEqual(json.loads(r_post.stdout)["body"], "hello via symlink")
+
+        r_status = _run_sym("status", "--json")
+        self.assertEqual(r_status.returncode, 0, r_status.stderr)
+        st = json.loads(r_status.stdout)
+        self.assertEqual(st["head_seq"], 2)
+        self.assertEqual([w["name"] for w in st["workers"]], ["wsym"])
+
 
 if __name__ == "__main__":
     unittest.main()
