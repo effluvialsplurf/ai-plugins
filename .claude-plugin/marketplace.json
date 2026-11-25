@@ -13,25 +13,25 @@
     {
       "name": "deep-review",
       "description": "Three-axis code review of a branch or PR (correctness, structure, testing), plus a skill for acting on the review's findings.",
-      "source": "./claude/deep-review",
+      "source": "./plugins/deep-review",
       "category": "development"
     },
     {
       "name": "build-loop",
       "description": "Run a planned feature end to end with agents (plan, plan check, build, review, PR) in three versions by the tools you have, plus the context and cache cost lessons as their own skill.",
-      "source": "./claude/build-loop",
+      "source": "./plugins/build-loop",
       "category": "development"
     },
     {
-      "name": "egm-runbook",
-      "description": "Per-feature runbook for the egm design steps and the superpowers build steps: tracks state, gives the next command, and blocks code and build skills until the egm review is concluded.",
-      "source": "./claude/egm-runbook",
+      "name": "lean-runbook",
+      "description": "Token-efficient design and build workflow: lean-design (budgeted design docs, 3-doc handoff) and lean-runbook (vertical-slice TDD build loop).",
+      "source": "./plugins/lean-runbook",
       "category": "development"
     },
     {
       "name": "swarmctl",
       "description": "Minimal local multi-agent swarm: spawn background workers on Claude or other CLIs, coordinate through a shared board via MCP tools or a UNIX CLI.",
-      "source": "./claude/swarmctl",
+      "source": "./plugins/swarmctl",
       "category": "development"
     }
   ]

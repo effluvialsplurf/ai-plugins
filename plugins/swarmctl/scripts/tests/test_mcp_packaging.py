@@ -455,8 +455,8 @@ class TestPackagingCUJ6(unittest.TestCase):
         self.home.mkdir()
         self.bin = self.tmp / "bin"
         self.skills = self.tmp / "skills"
-        self.launcher = REPO_ROOT / "claude/swarmctl/scripts/bin/swarmctl"
-        self.skill_src = REPO_ROOT / "claude/swarmctl/skills/swarmctl"
+        self.launcher = REPO_ROOT / "plugins/swarmctl/scripts/bin/swarmctl"
+        self.skill_src = REPO_ROOT / "plugins/swarmctl/skills/swarmctl"
 
     def run_install(self, *args):
         env = {**os.environ, "HOME": str(self.home)}
@@ -470,7 +470,7 @@ class TestPackagingCUJ6(unittest.TestCase):
     # --- static packaging ---
     def test_plugin_json(self):
         import swarmctl
-        data = json.loads((REPO_ROOT / "claude/swarmctl/.claude-plugin/plugin.json").read_text())
+        data = json.loads((REPO_ROOT / "plugins/swarmctl/.claude-plugin/plugin.json").read_text())
         self.assertEqual(data["name"], "swarmctl")
         self.assertEqual(data["version"], swarmctl.__version__)
         srv = data["mcpServers"]["swarmctl"]
@@ -482,10 +482,11 @@ class TestPackagingCUJ6(unittest.TestCase):
     def test_marketplace_json(self):
         data = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text())
         by_name = {p["name"]: p for p in data["plugins"]}
-        self.assertEqual(by_name["swarmctl"]["source"], "./claude/swarmctl")
+        self.assertEqual(by_name["swarmctl"]["source"], "./plugins/swarmctl")
         self.assertEqual(by_name["swarmctl"]["category"], "development")
-        for n in ("deep-review", "build-loop", "egm-runbook"):
-            self.assertEqual(by_name[n]["source"], f"./claude/{n}")
+        for n in ("deep-review", "build-loop", "lean-runbook"):
+            self.assertEqual(by_name[n]["source"], f"./plugins/{n}")
+        self.assertNotIn("egm-runbook", by_name)
 
     def test_skill_frontmatter(self):
         text = (self.skill_src / "SKILL.md").read_text()

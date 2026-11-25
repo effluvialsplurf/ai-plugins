@@ -1,0 +1,9 @@
+{
+  "name": "lean-runbook",
+  "version": "0.3.0",
+  "description": "Token-efficient design and build workflow: lean-design (15-20m read-time budgeted design docs) and lean-runbook (vertical-slice TDD build loop).",
+  "author": {
+    "name": "effluvialsplurf"
+  },
+  "repository": "https://github.com/effluvialsplurf/ai-plugins"
+}

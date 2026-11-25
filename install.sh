@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AG_DEST="${HOME}/.gemini/config/plugins"
-CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
 SKILLS_DEST=""
 BIN_DEST="${HOME}/.local/bin"
 BIN_EXPLICIT=0
@@ -25,7 +24,7 @@ Cursor, Windsurf, OpenCode, Kiro, ~/.agents/skills, etc.).
 Target Options (pick at most one):
   --all                 Manage both Antigravity and Claude Code plugins (default)
   --antigravity         Only manage Antigravity plugins (~/.gemini/config/plugins)
-  --claude              Only manage Claude Code plugins (local marketplace + statusLine)
+  --claude              Only manage Claude Code plugins
   --skills <dir>        Install/symlink portable skills into any Agent Skills directory
   --agents              Shorthand for --skills ~/.agents/skills
   --codex               Shorthand for --skills ~/.codex/skills
@@ -142,19 +141,18 @@ done
 
 # Portable skill registry: "skill_name|plugin_group|relative_source_path|default_included"
 SKILL_CATALOG=(
-  "deep-review|deep-review|claude/deep-review/skills/deep-review|yes"
-  "receiving-deep-review|deep-review|claude/deep-review/skills/receiving-deep-review|yes"
-  "build-loop|build-loop|claude/build-loop/skills/build-loop|yes"
-  "context-costs|build-loop|claude/build-loop/skills/context-costs|yes"
-  "lean-design|lean-runbook|antigravity/lean-runbook/skills/lean-design|yes"
-  "lean-runbook|lean-runbook|antigravity/lean-runbook/skills/lean-runbook|yes"
-  "runbook|egm-runbook|claude/egm-runbook/skills/runbook|no"
-  "swarmctl|swarmctl|claude/swarmctl/skills/swarmctl|yes"
+  "deep-review|deep-review|plugins/deep-review/skills/deep-review|yes"
+  "receiving-deep-review|deep-review|plugins/deep-review/skills/receiving-deep-review|yes"
+  "build-loop|build-loop|plugins/build-loop/skills/build-loop|yes"
+  "context-costs|build-loop|plugins/build-loop/skills/context-costs|yes"
+  "lean-design|lean-runbook|plugins/lean-runbook/skills/lean-design|yes"
+  "lean-runbook|lean-runbook|plugins/lean-runbook/skills/lean-runbook|yes"
+  "swarmctl|swarmctl|plugins/swarmctl/skills/swarmctl|yes"
 )
 
 # CLI binary registry: "bin_name|plugin_group|relative_source_path"
 BIN_CATALOG=(
-  "swarmctl|swarmctl|claude/swarmctl/scripts/bin/swarmctl"
+  "swarmctl|swarmctl|plugins/swarmctl/scripts/bin/swarmctl"
 )
 
 matches_filter() {
@@ -229,8 +227,8 @@ link_or_copy_dir() {
 
 status_antigravity() {
   echo "Antigravity plugins (${AG_DEST}):"
-  for src in "${REPO_DIR}/antigravity"/*; do
-    [[ -d "${src}" ]] || continue
+  for src in "${REPO_DIR}/plugins"/*; do
+    [[ -f "${src}/plugin.json" ]] || continue
     name="$(basename "${src}")"
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
@@ -251,7 +249,7 @@ status_antigravity() {
 
 status_claude() {
   echo "Claude Code plugins (repo: ${REPO_DIR}):"
-  for src in "${REPO_DIR}/claude"/*; do
+  for src in "${REPO_DIR}/plugins"/*; do
     [[ -d "${src}" ]] || continue
     name="$(basename "${src}")"
     matches_filter "${name}" || continue
@@ -373,8 +371,8 @@ uninstall_bin() {
 
 install_antigravity() {
   local installed=0
-  for src in "${REPO_DIR}/antigravity"/*; do
-    [[ -d "${src}" ]] || continue
+  for src in "${REPO_DIR}/plugins"/*; do
+    [[ -f "${src}/plugin.json" ]] || continue
     name="$(basename "${src}")"
     matches_filter "${name}" || continue
     mkdir -p "${AG_DEST}"
@@ -391,8 +389,8 @@ install_antigravity() {
 }
 
 uninstall_antigravity() {
-  for src in "${REPO_DIR}/antigravity"/*; do
-    [[ -d "${src}" ]] || continue
+  for src in "${REPO_DIR}/plugins"/*; do
+    [[ -f "${src}/plugin.json" ]] || continue
     name="$(basename "${src}")"
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
@@ -405,32 +403,9 @@ uninstall_antigravity() {
   done
 }
 
-update_claude_statusline() {
-  local statusline_path="${REPO_DIR}/claude/egm-runbook/scripts/statusline"
-  [[ -f "${statusline_path}" && -f "${CLAUDE_SETTINGS}" ]] || return 0
-  python3 - "${CLAUDE_SETTINGS}" "${statusline_path}" <<'PY'
-import json, sys
-from pathlib import Path
-
-settings_path = Path(sys.argv[1])
-statusline_path = sys.argv[2]
-data = json.loads(settings_path.read_text(encoding="utf-8"))
-sl = data.get("statusLine")
-expected_cmd = f"python3 {statusline_path}"
-
-if isinstance(sl, dict) and sl.get("type") == "command" and "egm-runbook/scripts/statusline" in str(sl.get("command", "")):
-    if sl.get("command") != expected_cmd:
-        sl["command"] = expected_cmd
-        settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        print(f"Claude Code: updated statusLine -> {expected_cmd}")
-    else:
-        print(f"Claude Code: statusLine already points to {statusline_path}")
-PY
-}
-
 install_claude() {
   local plugins=()
-  for plugin in deep-review build-loop egm-runbook swarmctl; do
+  for plugin in deep-review build-loop lean-runbook swarmctl; do
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -463,15 +438,12 @@ install_claude() {
     claude plugin install "${plugin}@ai-plugins"
   done
 
-  if matches_filter "egm-runbook"; then
-    update_claude_statusline
-  fi
   echo "Claude Code: done. Restart Claude Code if a session is open."
 }
 
 uninstall_claude() {
   local plugins=()
-  for plugin in swarmctl egm-runbook build-loop deep-review; do
+  for plugin in swarmctl lean-runbook build-loop deep-review; do
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -486,9 +458,6 @@ uninstall_claude() {
   if [[ -z "${ONLY_FILTER}" ]]; then
     echo "  claude plugin marketplace remove ai-plugins"
   fi
-  if matches_filter "egm-runbook"; then
-    echo "  (if configured, also remove or update 'statusLine' in ~/.claude/settings.json)"
-  fi
 }
 
 install_skills() {
@@ -498,7 +467,6 @@ install_skills() {
   local entry skill group rel default_inc src dst
   local installed=0
   local saw_build_loop=0
-  local saw_egm_runbook=0
   local saw_lean_design=0
   local saw_lean_runbook=0
   local saw_swarmctl=0
@@ -515,7 +483,6 @@ install_skills() {
     link_or_copy_dir "Skills" "${src}" "${dst}" "${skill}"
     installed=$((installed + 1))
     [[ "${skill}" == "build-loop" ]] && saw_build_loop=1
-    [[ "${skill}" == "runbook" ]] && saw_egm_runbook=1
     [[ "${skill}" == "lean-design" ]] && saw_lean_design=1
     [[ "${skill}" == "lean-runbook" ]] && saw_lean_runbook=1
     [[ "${skill}" == "swarmctl" ]] && saw_swarmctl=1
@@ -526,11 +493,11 @@ install_skills() {
     return 1
   fi
 
-  if [[ "${saw_build_loop}" -eq 1 || "${saw_lean_design}" -eq 1 || "${saw_lean_runbook}" -eq 1 || "${saw_egm_runbook}" -eq 1 || "${saw_swarmctl}" -eq 1 ]]; then
+  if [[ "${saw_build_loop}" -eq 1 || "${saw_lean_design}" -eq 1 || "${saw_lean_runbook}" -eq 1 || "${saw_swarmctl}" -eq 1 ]]; then
     echo ""
     echo "Notes for non-native harnesses (see ${REPO_DIR}/docs/PORTABILITY.md):"
     if [[ "${saw_build_loop}" -eq 1 ]]; then
-      echo "  - build-loop: templates/ and helper scripts live in ${REPO_DIR}/claude/build-loop/ (use references/version-custom-harness.md for custom models; stall-watch.sh needs Bash 4+ & GNU find)."
+      echo "  - build-loop: templates/ and helper scripts live in ${REPO_DIR}/plugins/build-loop/ (use references/version-custom-harness.md for custom models; stall-watch.sh needs Bash 4+ & GNU find)."
     fi
     if [[ "${saw_lean_design}" -eq 1 ]]; then
       echo "  - lean-design: invoke scripts/design_check.py from ${dest}/lean-design/scripts/design_check.py; SKILL.md swarm prose can be mapped manually or converted via docs/CONVERSION-PROMPTS.md."
@@ -540,9 +507,6 @@ install_skills() {
     fi
     if [[ "${saw_swarmctl}" -eq 1 ]]; then
       echo "  - swarmctl: SKILL.md is portable, but the MCP server and CLI need the bundled engine; run ./install.sh --bin-dir ~/.local/bin --only swarmctl, then register 'swarmctl mcp' as a stdio MCP server in your harness."
-    fi
-    if [[ "${saw_egm_runbook}" -eq 1 ]]; then
-      echo "  - egm-runbook (runbook): CLI is at ${REPO_DIR}/claude/egm-runbook/scripts/runbook.py; hooks & '!' override require Claude Code or conversion (docs/CONVERSION-PROMPTS.md)."
     fi
   fi
 }
