@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lean-runbook: 5-stage workflow tracker & Antigravity 2.0 hook gate.
+"""lean-runbook: 5-stage workflow tracker & dual-protocol (Claude Code / Antigravity) hook gate.
 
 Stages:
   1. spec      Compact EGM Spec (docs/specs/<slug>.md, <=300 lines)
@@ -15,10 +15,9 @@ CLI subcommands:
   skip gate --reason "..." [--cwd <repo>]
   finish [--cwd <repo>]
 
-Antigravity 2.0 hook modes (reads camelCase JSON from stdin, prints JSON to stdout):
-  hook-session-start
-  hook-pre-write
-  hook-pre-cmd
+Hook modes (payload JSON on stdin, decision JSON on stdout; unparseable input fails open):
+  hook <session-start|pre-tool-use> [--harness auto|claude|antigravity]
+  pre-commit   (exit 1 when staged code files meet a closed gate; fails closed)
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 STAGES = ("spec", "goldfish", "plan", "build", "review")
 GATE_STAGES = {"spec", "goldfish"}
@@ -53,7 +52,7 @@ def now_iso() -> str:
 
 
 def data_root() -> Path:
-    env = os.environ.get("PLUGIN_DATA") or os.environ.get("LEAN_RUNBOOK_DATA")
+    env = os.environ.get("LEAN_RUNBOOK_DATA")
     if env:
         return Path(env)
     return Path.home() / ".cache" / "lean-runbook"
@@ -379,7 +378,7 @@ def cmd_finish(cwd: str | None) -> int:
     return 0
 
 
-# ---------------- Hook Handlers (Antigravity 2.0 Contract) ----------------
+# ---------------- Hook Handlers (pure decisions + protocol adapters) ----------------
 
 def read_hook_stdin() -> dict[str, Any]:
     raw = sys.stdin.read().strip()
@@ -427,136 +426,145 @@ def is_budgeted_doc(path: Path, repo: Path) -> tuple[bool, str]:
     return False, ""
 
 
-def hook_session_start() -> int:
+class Decision(NamedTuple):
+    kind: str  # allow | ask | deny
+    reason: str = ""
+
+
+ALLOW = Decision("allow")
+
+
+def nlines(text: Any) -> int:
+    return str(text).count("\n") + 1
+
+
+def decide_write(state: dict[str, Any], path: Any, content: Any, is_edit: bool) -> Decision:
+    """content: new text for a write; for an edit, a list of (old, new) string pairs."""
+    repo = Path(state.get("repo", "."))
+    target = repo / path  # an absolute path replaces repo
+    if is_under(target, data_root()):
+        return Decision("deny", "lean-runbook state directory is protected. Use the lean-runbook CLI.")
+    if gate_is_closed(state) and is_code_file(target, repo):
+        return Decision("deny", (
+            f"lean-runbook Spec Gate is CLOSED for '{state['slug']}'. Finish Stage 2 (2-Pass Goldfish review on "
+            f"docs/specs/{state['slug']}.md) and run `done goldfish` (or `skip gate --reason \"...\"`) "
+            f"before editing code file {target.name}."))
+    budgeted, kind = is_budgeted_doc(target, repo)
+    if not budgeted or not content:
+        return ALLOW
+    if is_edit:
+        try:
+            count = nlines(target.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ALLOW
+        count += sum(nlines(new) - nlines(old) for old, new in content)
+    else:
+        count = nlines(content)
+    if count > LINE_BUDGET + LINE_GRACE:
+        return Decision("ask", (
+            f"lean-runbook Token Guardrail: {kind} ({target.name}) is {count} lines (budget is <= {LINE_BUDGET}). "
+            f"Trim prose into tables or split into smaller <=3-commit slices, or approve override."))
+    return ALLOW
+
+
+STATE_DIR = ".cache/lean-runbook"
+CLI_RE = re.compile(r"runbook\.py|(?<![\w./-])lean-runbook(?![\w./-])")
+OVERRIDE_RE = re.compile(r"\b(skip\s+gate|done\s+(goldfish|2)|start\s+\S+.*--force)\b")
+
+
+def decide_cmd(state: dict[str, Any], cmd: str) -> Decision:
+    plain = re.sub(r"[\"'\\{}]", "", cmd)  # defeat quote/brace evasion such as lean-"runbook"
+    for seg in re.split(r"[;&|\n`]|\$\(", plain):
+        if any(m in seg for m in (str(data_root()), STATE_DIR, "LEAN_RUNBOOK_DATA")) and not CLI_RE.search(seg.replace(STATE_DIR, "")):
+            return Decision("deny", "Direct access to the lean-runbook state directory is blocked. Use the lean-runbook CLI.")
+    if CLI_RE.search(plain.replace(STATE_DIR, "")):
+        if OVERRIDE_RE.search(plain) or (gate_is_closed(state) and re.search(r"\bfinish\b", plain)):
+            return Decision("ask", f"lean-runbook: opening, bypassing, resetting or abandoning the spec gate for '{state['slug']}' needs explicit user approval.")
+    return ALLOW
+
+
+def format_session_start(state: dict[str, Any], script_paths: dict[str, str]) -> str:
+    idx, st = current_stage(state)
+    gate = "CLOSED" if gate_is_closed(state) else "OPEN"
+    epic_tag = f" [epic: {state['epic']}]" if state.get("epic") else ""
+    scripts = " ".join(f"{k}={v}" for k, v in script_paths.items())
+    return (f"lean-runbook active: {state['slug']}{epic_tag} | Stage {idx}/{len(STAGES)} ({st}) "
+            f"| Gate: {gate} | Next: {next_guidance(state)} | Scripts: {scripts}")
+
+
+def detect_harness(payload: dict[str, Any]) -> str:
+    if "tool_input" in payload or "hook_event_name" in payload:
+        return "claude"
+    return "antigravity" if "toolCall" in payload or "workspacePaths" in payload else "unknown"
+
+
+def tool_action(harness: str, payload: dict[str, Any]) -> tuple[str, Any, Any, bool]:
+    """Normalize a payload to (kind, path-or-cmd, content, is_edit); kind is write|cmd."""
+    if harness == "claude":
+        name, a = payload.get("tool_name"), payload.get("tool_input") or {}
+        if name == "Bash":
+            return "cmd", str(a.get("command") or ""), None, False
+        path = a.get("file_path") or a.get("notebook_path") or ""
+        if name in ("Edit", "MultiEdit"):
+            return "write", path, [(e.get("old_string", ""), e.get("new_string", "")) for e in a.get("edits") or [a]], True
+        return "write", path, a.get("content"), False
+    tc = payload.get("toolCall") or {}
+    a = tc.get("args") or {}
+    if tc.get("name") == "run_command":
+        return "cmd", str(a.get("CommandLine") or a.get("command") or ""), None, False
+    path = a.get("Path") or a.get("TargetFile") or a.get("path") or a.get("file_path") or ""
+    if "TargetContent" in a or "ReplacementChunks" in a:
+        return "write", path, [(c.get("TargetContent", ""), c.get("ReplacementContent", "")) for c in a.get("ReplacementChunks") or [a]], True
+    return "write", path, a.get("Content") or a.get("CodeContent"), False
+
+
+def render(harness: str, d: Decision) -> dict[str, Any]:
+    if harness == "claude":
+        if d.kind == "allow":
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": d.kind, "permissionDecisionReason": d.reason}}
+    out = {"decision": "force_ask" if d.kind == "ask" else d.kind}
+    return {**out, "reason": d.reason} if d.reason else out
+
+
+def hook_main(event: str, harness: str) -> int:
+    """Fail open: any parse or runtime error prints a neutral allow."""
     try:
         payload = read_hook_stdin()
-        repo = hook_repo_from_payload(payload)
-        state = load_state(repo)
+        if not isinstance(payload, dict):
+            raise ValueError("payload is not an object")
+        if harness == "auto":
+            harness = detect_harness(payload)
+        state = load_state(hook_repo_from_payload(payload)) if harness != "unknown" else None
         if not state or not state.get("active"):
-            print("{}")
-            return 0
-        idx, st = current_stage(state)
-        gate = "CLOSED" if gate_is_closed(state) else "OPEN"
-        epic_tag = f" [epic: {state['epic']}]" if state.get("epic") else ""
-        msg = (
-            f"lean-runbook active: {state['slug']}{epic_tag} | Stage {idx}/{len(STAGES)} ({st}) "
-            f"| Gate: {gate} | Next: {next_guidance(state)}"
-        )
-        print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}))
-        return 0
+            print(json.dumps({"decision": "allow"} if harness == "antigravity" and event == "pre-tool-use" else {}))
+        elif event == "session-start":
+            here = Path(__file__).resolve()
+            msg = format_session_start(state, {"runbook.py": str(here), "design_check.py": str(here.parents[2] / "lean-design/scripts/design_check.py")})
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": msg}} if harness == "claude"
+                             else {"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}))
+        else:
+            kind, target, content, is_edit = tool_action(harness, payload)
+            d = decide_cmd(state, target) if kind == "cmd" else decide_write(state, target, content, is_edit) if target else ALLOW
+            print(json.dumps(render(harness, d)))
     except Exception:
-        print("{}")
-        return 0
+        print(json.dumps({"decision": "allow"} if harness == "antigravity" and event == "pre-tool-use" else {}))
+    return 0
 
 
-def hook_pre_write() -> int:
+def cmd_pre_commit(cwd: str | None) -> int:
+    """Fail closed: block when staged code meets a closed gate, or when staged files cannot be read."""
     try:
-        payload = read_hook_stdin()
-        repo = hook_repo_from_payload(payload)
+        repo = repo_root_for(cwd)
+        out = subprocess.check_output(["git", "-C", str(repo), "diff", "--cached", "--name-only", "-z"], stderr=subprocess.DEVNULL, text=True)
         state = load_state(repo)
-        if not state or not state.get("active"):
-            print(json.dumps({"decision": "allow"}))
+        code = [f for f in out.split("\0") if f and is_code_file(repo / f, repo)]
+        if not code or not state or not state.get("active") or not gate_is_closed(state):
             return 0
-
-        tc = payload.get("toolCall") or {}
-        args = tc.get("args") or {}
-        raw_path = (
-            args.get("Path")
-            or args.get("TargetFile")
-            or args.get("path")
-            or args.get("file_path")
-            or ""
-        )
-        if not raw_path:
-            print(json.dumps({"decision": "allow"}))
-            return 0
-        target = Path(raw_path)
-        if not target.is_absolute():
-            target = repo / target
-
-        # 1. Spec Gate: block repo code edits until Goldfish gate is open
-        if gate_is_closed(state) and is_code_file(target, repo):
-            print(json.dumps({
-                "decision": "deny",
-                "reason": (
-                    f"lean-runbook Spec Gate is CLOSED for '{state['slug']}'. "
-                    f"Finish Stage 2 (2-Pass Goldfish review on docs/specs/{state['slug']}.md) "
-                    f"and run `runbook.py done goldfish` (or `skip gate --reason \"...\"`) "
-                    f"before editing code file {target.name}."
-                ),
-            }))
-            return 0
-
-        # 2. Line-Budget Guard on Compact EGM Specs & Contract Plans
-        budgeted, kind = is_budgeted_doc(target, repo)
-        if budgeted:
-            content = args.get("Content") or args.get("CodeContent") or ""
-            if content:
-                line_count = content.count("\n") + 1
-                if line_count > LINE_BUDGET + LINE_GRACE:
-                    print(json.dumps({
-                        "decision": "force_ask",
-                        "reason": (
-                            f"lean-runbook Token Guardrail: {kind} ({target.name}) is {line_count} lines "
-                            f"(budget is <= {LINE_BUDGET} lines). Trim narrative prose into tables "
-                            f"or split into smaller <=3-commit vertical slices, or approve override."
-                        ),
-                    }))
-                    return 0
-
-        print(json.dumps({"decision": "allow"}))
-        return 0
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
-        return 0
-
-
-def hook_pre_cmd() -> int:
-    """Require explicit user approval (force_ask) whenever an agent tries to open/bypass/reset the spec gate."""
-    try:
-        payload = read_hook_stdin()
-        repo = hook_repo_from_payload(payload)
-        state = load_state(repo)
-        if not state or not state.get("active"):
-            print(json.dumps({"decision": "allow"}))
-            return 0
-
-        tc = payload.get("toolCall") or {}
-        args = tc.get("args") or {}
-        cmd = str(args.get("CommandLine") or args.get("command") or "")
-
-        # Protect state directory from direct tampering
-        dr = str(data_root())
-        if dr in cmd and "runbook.py" not in cmd:
-            print(json.dumps({
-                "decision": "deny",
-                "reason": "Direct modification of lean-runbook state directory is blocked. Use runbook.py.",
-            }))
-            return 0
-
-        if "runbook.py" in cmd:
-            # Gate-opening or state-resetting operations require explicit user confirmation
-            if re.search(r"\b(skip\s+gate|done\s+(goldfish|2)|start\s+\S+.*--force)\b", cmd):
-                print(json.dumps({
-                    "decision": "force_ask",
-                    "reason": (
-                        f"lean-runbook: Opening, bypassing, or force-resetting the spec gate "
-                        f"for '{state['slug']}' requires explicit user approval."
-                    ),
-                }))
-                return 0
-            if gate_is_closed(state) and re.search(r"\bfinish\b", cmd):
-                print(json.dumps({
-                    "decision": "force_ask",
-                    "reason": f"lean-runbook: Gate is still CLOSED for '{state['slug']}'. Approve to abandon/finish.",
-                }))
-                return 0
-
-        print(json.dumps({"decision": "allow"}))
-        return 0
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
-        return 0
+        print(f"lean-runbook: Spec Gate is CLOSED for '{state['slug']}'; staged code files: {', '.join(code)}", file=sys.stderr)
+    except Exception as e:
+        print(f"lean-runbook: pre-commit could not verify staged files ({e}); blocking.", file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str]) -> int:
@@ -590,12 +598,13 @@ def main(argv: list[str]) -> int:
         return cmd_skip(rest, cwd)
     if cmd == "finish":
         return cmd_finish(cwd)
-    if cmd == "hook-session-start":
-        return hook_session_start()
-    if cmd == "hook-pre-write":
-        return hook_pre_write()
-    if cmd == "hook-pre-cmd":
-        return hook_pre_cmd()
+    if cmd == "pre-commit":
+        return cmd_pre_commit(cwd)
+    if cmd == "hook" and rest and rest[0] in ("session-start", "pre-tool-use"):
+        harness = "auto"
+        if "--harness" in rest[1:] and rest.index("--harness") + 1 < len(rest):
+            harness = rest[rest.index("--harness") + 1]
+        return hook_main(rest[0], harness if harness in ("claude", "antigravity") else "auto")
     print(f"Unknown subcommand: {cmd}", file=sys.stderr)
     return 2
 

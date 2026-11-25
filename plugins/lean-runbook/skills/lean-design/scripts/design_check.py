@@ -75,7 +75,7 @@ def sanitize_slug(raw: str) -> str:
 
 
 def data_root() -> Path:
-    env = os.environ.get("LEAN_DESIGN_DATA") or os.environ.get("PLUGIN_DATA")
+    env = os.environ.get("LEAN_DESIGN_DATA")
     if env:
         return Path(env)
     return Path.home() / ".cache" / "lean-design"

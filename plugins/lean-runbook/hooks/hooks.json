@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/lean-runbook/scripts/runbook.py\" hook session-start --harness claude", "timeout": 5}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/lean-runbook/scripts/runbook.py\" hook pre-tool-use --harness claude", "timeout": 5}]}
+    ]
+  }
+}

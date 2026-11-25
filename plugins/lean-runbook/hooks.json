@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook-session-start",
+        "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook session-start --harness antigravity",
         "timeout": 5
       }
     ],
@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook-pre-write",
+            "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook pre-tool-use --harness antigravity",
             "timeout": 5
           }
         ]
@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook-pre-cmd",
+            "command": "python3 ./skills/lean-runbook/scripts/runbook.py hook pre-tool-use --harness antigravity",
             "timeout": 5
           }
         ]

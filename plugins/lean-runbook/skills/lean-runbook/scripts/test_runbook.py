@@ -19,7 +19,7 @@ class LeanRunbookTests(unittest.TestCase):
         self.repo.mkdir()
         self.data.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        self.env = {**os.environ, "PLUGIN_DATA": str(self.data)}
+        self.env = {**os.environ, "LEAN_RUNBOOK_DATA": str(self.data)}
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -34,7 +34,7 @@ class LeanRunbookTests(unittest.TestCase):
 
     def run_hook(self, mode: str, payload: dict) -> dict:
         res = subprocess.run(
-            [sys.executable, str(RUNBOOK), mode],
+            [sys.executable, str(RUNBOOK), "hook", "session-start" if mode.endswith("start") else "pre-tool-use", "--harness", "antigravity"],
             input=json.dumps(payload),
             env=self.env,
             text=True,
