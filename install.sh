@@ -30,9 +30,9 @@ Target Options (pick at most one):
   --codex               Shorthand for --skills ~/.codex/skills
   --gemini-cli          Shorthand for --skills ~/.gemini/skills
   --opencode            Shorthand for --skills ~/.config/opencode/skills
-  --bin-dir <dir>       Symlink CLI binaries (swarmctl) into <dir> (default ~/.local/bin; combinable with any target)
+  --bin-dir <dir>       Symlink CLI shims (plugins/*/bin, plugins/*/scripts/bin) into <dir> (default ~/.local/bin)
   --only <csv>          Comma-separated plugin or skill names to filter install
-                        (e.g., --only deep-review,lean-design or --only build-loop)
+                        (e.g., --only <plugin>,<skill> or --only <plugin>)
 
 Mode & Action Options:
   --link                Symlink plugins/skills for live iteration (default)
@@ -43,12 +43,12 @@ Mode & Action Options:
 
 Examples:
   ./install.sh                                      # Antigravity + Claude Code
-  ./install.sh --claude --only deep-review          # Single Claude Code plugin
-  ./install.sh --only deep-review                   # Works with default --all too
+  ./install.sh --claude --only <plugin>             # Single Claude Code plugin
+  ./install.sh --only <plugin>                      # Works with default --all too
   ./install.sh --antigravity --copy                 # Standalone Antigravity copy
   ./install.sh --codex                              # Portable skills -> ~/.codex/skills
-  ./install.sh --skills .cursor/skills --only deep-review,lean-design
-  ./install.sh --bin-dir ~/.local/bin --only swarmctl
+  ./install.sh --skills .cursor/skills --only <plugin>,<skill>
+  ./install.sh --bin-dir ~/.local/bin --only <shim>
 USAGE
 }
 
@@ -139,21 +139,32 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Portable skill registry: "skill_name|plugin_group|relative_source_path|default_included"
-SKILL_CATALOG=(
-  "deep-review|deep-review|plugins/deep-review/skills/deep-review|yes"
-  "receiving-deep-review|deep-review|plugins/deep-review/skills/receiving-deep-review|yes"
-  "build-loop|build-loop|plugins/build-loop/skills/build-loop|yes"
-  "context-costs|build-loop|plugins/build-loop/skills/context-costs|yes"
-  "lean-design|lean-runbook|plugins/lean-runbook/skills/lean-design|yes"
-  "lean-runbook|lean-runbook|plugins/lean-runbook/skills/lean-runbook|yes"
-  "swarmctl|swarmctl|plugins/swarmctl/skills/swarmctl|yes"
-)
+# Registry: plugins come from .claude-plugin/marketplace.json (name|relative source).
+REGISTRY=()
+reg_out="$(python3 - "${REPO_DIR}" <<'PY'
+import json, sys
+from pathlib import Path
+for p in json.loads((Path(sys.argv[1]) / ".claude-plugin/marketplace.json").read_text())["plugins"]:
+    print(p["name"], p["source"].removeprefix("./"), sep="|")
+PY
+)" || { echo "Registry: cannot read ${REPO_DIR}/.claude-plugin/marketplace.json" >&2; exit 1; }
+while IFS= read -r line; do [[ -n "${line}" ]] && REGISTRY+=("${line}"); done <<< "${reg_out}"
 
-# CLI binary registry: "bin_name|plugin_group|relative_source_path"
-BIN_CATALOG=(
-  "swarmctl|swarmctl|plugins/swarmctl/scripts/bin/swarmctl"
-)
+# Skill registry: "skill_name|plugin_group|relative_source_path|default_included"
+# CLI shim registry: "bin_name|plugin_group|relative_source_path"
+SKILL_CATALOG=()
+BIN_CATALOG=()
+for reg_entry in "${REGISTRY[@]}"; do
+  IFS='|' read -r reg_name reg_src <<< "${reg_entry}"
+  for f in "${REPO_DIR}/${reg_src}"/skills/*/SKILL.md; do
+    [[ -f "${f}" ]] || continue
+    SKILL_CATALOG+=("$(basename "$(dirname "${f}")")|${reg_name}|$(dirname "${f#"${REPO_DIR}/"}")|yes")
+  done
+  for f in "${REPO_DIR}/${reg_src}"/bin/* "${REPO_DIR}/${reg_src}"/scripts/bin/*; do
+    [[ -f "${f}" && -x "${f}" ]] || continue
+    BIN_CATALOG+=("$(basename "${f}")|${reg_name}|${f#"${REPO_DIR}/"}")
+  done
+done
 
 matches_filter() {
   local name="$1"
@@ -227,9 +238,10 @@ link_or_copy_dir() {
 
 status_antigravity() {
   echo "Antigravity plugins (${AG_DEST}):"
-  for src in "${REPO_DIR}/plugins"/*; do
+  for reg_entry in "${REGISTRY[@]}"; do
+    IFS='|' read -r name reg_src <<< "${reg_entry}"
+    src="${REPO_DIR}/${reg_src}"
     [[ -f "${src}/plugin.json" ]] || continue
-    name="$(basename "${src}")"
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
     if [[ -L "${dst}" ]]; then
@@ -249,9 +261,10 @@ status_antigravity() {
 
 status_claude() {
   echo "Claude Code plugins (repo: ${REPO_DIR}):"
-  for src in "${REPO_DIR}/plugins"/*; do
+  for reg_entry in "${REGISTRY[@]}"; do
+    IFS='|' read -r name reg_src <<< "${reg_entry}"
+    src="${REPO_DIR}/${reg_src}"
     [[ -d "${src}" ]] || continue
-    name="$(basename "${src}")"
     matches_filter "${name}" || continue
     echo "  [available] ${name}@ai-plugins"
   done
@@ -371,9 +384,10 @@ uninstall_bin() {
 
 install_antigravity() {
   local installed=0
-  for src in "${REPO_DIR}/plugins"/*; do
+  for reg_entry in "${REGISTRY[@]}"; do
+    IFS='|' read -r name reg_src <<< "${reg_entry}"
+    src="${REPO_DIR}/${reg_src}"
     [[ -f "${src}/plugin.json" ]] || continue
-    name="$(basename "${src}")"
     matches_filter "${name}" || continue
     mkdir -p "${AG_DEST}"
     dst="${AG_DEST}/${name}"
@@ -389,9 +403,10 @@ install_antigravity() {
 }
 
 uninstall_antigravity() {
-  for src in "${REPO_DIR}/plugins"/*; do
+  for reg_entry in "${REGISTRY[@]}"; do
+    IFS='|' read -r name reg_src <<< "${reg_entry}"
+    src="${REPO_DIR}/${reg_src}"
     [[ -f "${src}/plugin.json" ]] || continue
-    name="$(basename "${src}")"
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
     if [[ -L "${dst}" && "$(readlink -f "${dst}" 2>/dev/null || true)" == "${src}" ]]; then
@@ -404,8 +419,9 @@ uninstall_antigravity() {
 }
 
 install_claude() {
-  local plugins=()
-  for plugin in deep-review build-loop lean-runbook swarmctl; do
+  local plugins=() plugin
+  for reg_entry in "${REGISTRY[@]}"; do
+    plugin="${reg_entry%%|*}"
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -442,8 +458,9 @@ install_claude() {
 }
 
 uninstall_claude() {
-  local plugins=()
-  for plugin in swarmctl lean-runbook build-loop deep-review; do
+  local plugins=() plugin
+  for reg_entry in "${REGISTRY[@]}"; do
+    plugin="${reg_entry%%|*}"
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -466,10 +483,7 @@ install_skills() {
   mkdir -p "${dest}"
   local entry skill group rel default_inc src dst
   local installed=0
-  local saw_build_loop=0
-  local saw_lean_design=0
-  local saw_lean_runbook=0
-  local saw_swarmctl=0
+  local installed_names=()
 
   for entry in "${SKILL_CATALOG[@]}"; do
     IFS='|' read -r skill group rel default_inc <<< "${entry}"
@@ -482,10 +496,7 @@ install_skills() {
     dst="${dest}/${skill}"
     link_or_copy_dir "Skills" "${src}" "${dst}" "${skill}"
     installed=$((installed + 1))
-    [[ "${skill}" == "build-loop" ]] && saw_build_loop=1
-    [[ "${skill}" == "lean-design" ]] && saw_lean_design=1
-    [[ "${skill}" == "lean-runbook" ]] && saw_lean_runbook=1
-    [[ "${skill}" == "swarmctl" ]] && saw_swarmctl=1
+    installed_names+=("${skill}")
   done
 
   if [[ "${installed}" -eq 0 ]]; then
@@ -493,22 +504,19 @@ install_skills() {
     return 1
   fi
 
-  if [[ "${saw_build_loop}" -eq 1 || "${saw_lean_design}" -eq 1 || "${saw_lean_runbook}" -eq 1 || "${saw_swarmctl}" -eq 1 ]]; then
-    echo ""
-    echo "Notes for non-native harnesses (see ${REPO_DIR}/docs/PORTABILITY.md):"
-    if [[ "${saw_build_loop}" -eq 1 ]]; then
-      echo "  - build-loop: templates/ and helper scripts live in ${REPO_DIR}/plugins/build-loop/ (use references/version-custom-harness.md for custom models; stall-watch.sh needs Bash 4+ & GNU find)."
-    fi
-    if [[ "${saw_lean_design}" -eq 1 ]]; then
-      echo "  - lean-design: invoke scripts/design_check.py from ${dest}/lean-design/scripts/design_check.py; SKILL.md swarm prose can be mapped manually or converted via docs/CONVERSION-PROMPTS.md."
-    fi
-    if [[ "${saw_lean_runbook}" -eq 1 ]]; then
-      echo "  - lean-runbook: invoke scripts/runbook.py CLI from ${dest}/lean-runbook/scripts/runbook.py; Antigravity hooks/swarm/run_workflow require conversion (docs/CONVERSION-PROMPTS.md)."
-    fi
-    if [[ "${saw_swarmctl}" -eq 1 ]]; then
-      echo "  - swarmctl: SKILL.md is portable, but the MCP server and CLI need the bundled engine; run ./install.sh --bin-dir ~/.local/bin --only swarmctl, then register 'swarmctl mcp' as a stdio MCP server in your harness."
-    fi
-  fi
+  echo ""
+  echo "Notes for non-native harnesses (see ${REPO_DIR}/docs/PORTABILITY.md):"
+  echo "  - helper scripts and templates live under ${REPO_DIR}/plugins/<plugin>/; skill scripts run from ${dest}/<skill>/scripts/."
+  for skill in "${installed_names[@]}"; do
+    for entry in "${BIN_CATALOG[@]}"; do
+      IFS='|' read -r name group rel <<< "${entry}"
+      [[ "${name}" == "${skill}" ]] || continue
+      echo "  - ${skill}: needs the bundled engine; run ./install.sh --bin-dir ~/.local/bin --only ${skill}."
+      if grep -q mcpServers "${REPO_DIR}/${rel%%/scripts/*}/.claude-plugin/plugin.json" 2>/dev/null; then
+        echo "    Then register '${skill} mcp' as a stdio MCP server in your harness."
+      fi
+    done
+  done
 }
 
 uninstall_skills() {
@@ -532,9 +540,9 @@ uninstall_skills() {
 # BIN_ONLY: --bin-dir given without any explicit target => bin actions only
 BIN_ONLY=0
 [[ "${BIN_EXPLICIT}" -eq 1 && "${TARGET_EXPLICIT}" -eq 0 ]] && BIN_ONLY=1
-# BIN_AUTO: no --bin-dir and default/--all/--claude target => manage bin alongside claude plugin
+# BIN_AUTO: no --bin-dir => manage shims in the default bin dir alongside any target
 BIN_AUTO=0
-[[ "${BIN_EXPLICIT}" -eq 0 && ( "${TARGET}" == "all" || "${TARGET}" == "claude" ) ]] && BIN_AUTO=1
+[[ "${BIN_EXPLICIT}" -eq 0 ]] && BIN_AUTO=1
 WANT_BIN=0
 [[ "${BIN_ONLY}" -eq 1 || "${BIN_AUTO}" -eq 1 || "${BIN_EXPLICIT}" -eq 1 ]] && WANT_BIN=1
 
@@ -557,7 +565,7 @@ case "${ACTION}" in
     if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then install_claude || rc=1; fi
     if [[ "${BIN_EXPLICIT}" -eq 1 ]]; then
       install_bin || rc=1
-    elif [[ "${BIN_AUTO}" -eq 1 ]] && matches_filter "swarmctl" "swarmctl"; then
+    elif [[ "${BIN_AUTO}" -eq 1 ]]; then
       install_bin || rc=1
     fi
     if [[ "${TARGET}" == "all" && -n "${ONLY_FILTER}" && "${TOTAL_INSTALLED}" -eq 0 ]]; then
