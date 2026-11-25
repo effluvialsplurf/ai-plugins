@@ -235,7 +235,7 @@ status_antigravity() {
     matches_filter "${name}" || continue
     dst="${AG_DEST}/${name}"
     if [[ -L "${dst}" ]]; then
-      target="$(readlink -f "${dst}")"
+      target="$(readlink -f "${dst}" 2>/dev/null || readlink "${dst}" 2>/dev/null || true)"
       if [[ "${target}" == "${src}" ]]; then
         echo "  [linked]   ${name} -> ${target}"
       else
@@ -277,7 +277,7 @@ status_skills() {
     src="${REPO_DIR}/${rel}"
     dst="${dest}/${skill}"
     if [[ -L "${dst}" ]]; then
-      target="$(readlink -f "${dst}")"
+      target="$(readlink -f "${dst}" 2>/dev/null || readlink "${dst}" 2>/dev/null || true)"
       if [[ "${target}" == "${src}" ]]; then
         echo "  [linked]   ${skill} -> ${target}"
       else
@@ -300,7 +300,7 @@ status_bin() {
     src="${REPO_DIR}/${rel}"
     dst="${BIN_DEST}/${name}"
     if [[ -L "${dst}" ]]; then
-      target="$(readlink -f "${dst}")"
+      target="$(readlink -f "${dst}" 2>/dev/null || readlink "${dst}" 2>/dev/null || true)"
       if [[ "${target}" == "${src}" ]]; then
         echo "  [linked]   ${name} -> ${target}"
       else

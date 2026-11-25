@@ -471,7 +471,10 @@ def _call_tool(ctx: _Ctx, params: Any) -> dict[str, Any]:
         if ctx.role == "worker":
             if name in _COORD_ONLY:
                 raise PermissionError(f"Worker role cannot call {name!r}")
-            with SwarmStore(ctx.swarm_dir / "board.db") as st:
+            db = ctx.swarm_dir / "board.db"
+            if not db.is_file():
+                raise PermissionError("Swarm store missing")
+            with SwarmStore(db) as st:
                 st.verify_worker_token(ctx.token or "", expected_name=ctx.agent)
         res = _HANDLERS[name](ctx, args)
         return {"content": [{"type": "text", "text": json.dumps(res, allow_nan=False)}], "isError": False}
@@ -530,7 +533,8 @@ def serve_stdio(swarm_dir: Path | str, agent_name: str | None = None, role: str 
         out: Any = os.fdopen(proto_fd, "w", encoding="utf-8", buffering=1, closefd=False)
     else:
         out = stdout
-    inp = stdin if stdin is not None else io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace", newline="\n")
+    wrapped_stdin = stdin is None
+    inp = stdin if not wrapped_stdin else io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace", newline="\n")
 
     def emit(obj: dict[str, Any]) -> None:
         out.write(json.dumps(obj, allow_nan=False, separators=(",", ":")) + "\n")
@@ -552,9 +556,14 @@ def serve_stdio(swarm_dir: Path | str, agent_name: str | None = None, role: str 
     except (BrokenPipeError, KeyboardInterrupt):
         return 0
     finally:
+        if wrapped_stdin:
+            try:
+                inp.detach()
+            except (OSError, ValueError):
+                pass
         if proto_fd is not None:
             try:
-                out.flush()
+                out.close()
             except (OSError, ValueError):
                 pass
             os.dup2(proto_fd, 1)
