@@ -5,10 +5,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hmac, json, re, secrets, sqlite3, threading
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
-SWARM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-WORKER_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
+SWARM_ID_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,31}\Z")
+WORKER_NAME_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,23}\Z")
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.-])@([a-z0-9][a-z0-9_-]{0,23})(?![A-Za-z0-9_-])")
 RESERVED_WORKER_NAMES = frozenset({"all", "coordinator", "system"})
 UNAUTH_SENDERS = frozenset({"coordinator", "system", "human"})
@@ -40,9 +40,9 @@ def _now_iso() -> str:
 
 def validate_ident(value: str, kind: str) -> str:
     if isinstance(value, str):
-        if kind == "swarm" and SWARM_ID_RE.match(value):
+        if kind == "swarm" and SWARM_ID_RE.fullmatch(value):
             return value
-        if kind == "worker" and WORKER_NAME_RE.match(value) and value not in RESERVED_WORKER_NAMES:
+        if kind == "worker" and WORKER_NAME_RE.fullmatch(value) and value not in RESERVED_WORKER_NAMES:
             return value
     raise ValueError(f"Invalid {kind} identifier: {value!r}")
 
@@ -54,6 +54,10 @@ def parse_mentions(body: str) -> list[str]:
 def _msg_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {"seq": int(row["seq"]), "sender": str(row["sender"]), "body": str(row["body"]),
             "mentions": list(json.loads(row["mentions_json"])), "created_at": str(row["created_at"])}
+
+
+def _public_worker(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in dict(row).items() if k != "worker_token"}
 
 
 class SwarmStore:
@@ -68,10 +72,14 @@ class SwarmStore:
     def _conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(str(self.db_path), timeout=5.0, isolation_level=None)
-            conn.row_factory = sqlite3.Row
-            for p in ("PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON"):
-                conn.execute(p)
+            conn = sqlite3.connect(str(self.db_path), timeout=5.0, isolation_level=None, check_same_thread=False)
+            try:
+                conn.row_factory = sqlite3.Row
+                for p in ("PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON"):
+                    conn.execute(p)
+            except BaseException:
+                conn.close()
+                raise
             self._local.conn = conn
             with self._lock:
                 self._conns.append(conn)
@@ -89,8 +97,27 @@ class SwarmStore:
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
-                conn.execute("ROLLBACK")
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
+
+    @contextmanager
+    def _read_tx(self) -> Iterator[sqlite3.Connection]:
+        conn = self._conn()
+        if conn.in_transaction:
+            yield conn
+            return
+        conn.execute("BEGIN")
+        try:
+            yield conn
+        finally:
+            if conn.in_transaction:
+                try:
+                    conn.execute("COMMIT")
+                except sqlite3.Error:
+                    pass
 
     def close(self) -> None:
         with self._lock:
@@ -142,6 +169,10 @@ class SwarmStore:
             raise ValueError("Worker brief must be non-empty")
         if workspace_mode not in VALID_WORKSPACE_MODES:
             raise ValueError(f"Invalid workspace_mode: {workspace_mode!r}")
+        if workspace_mode == "share" and (not isinstance(workspace_path, str) or not workspace_path.strip()):
+            raise ValueError("workspace_path is required when workspace_mode == 'share'")
+        if sender not in UNAUTH_SENDERS:
+            raise ValueError(f"Invalid brief sender {sender!r}; must be in {sorted(UNAUTH_SENDERS)}")
         resolved_perm = permission_mode or ("readonly" if workspace_mode == "inherit" else "edit")
         if resolved_perm not in VALID_PERMISSION_MODES:
             raise ValueError(f"Invalid permission_mode: {resolved_perm!r}")
@@ -150,7 +181,8 @@ class SwarmStore:
             existing = conn.execute("SELECT state FROM workers WHERE name = ?", (name,)).fetchone()
             if existing is not None and existing["state"] != "killed":
                 raise ValueError(f"Worker {name!r} already exists in state {existing['state']!r}")
-            resolved_runner, resolved_path = runner or meta["default_runner"], workspace_path or meta["repo_root"]
+            resolved_runner = runner or meta["default_runner"]
+            resolved_path = (workspace_path or meta["repo_root"]) if workspace_mode == "inherit" else workspace_path
             resolved_model = meta["default_model"] if model is None else model
             fork_session_id, transcript_seed = "", ""
             if fork_from is not None:
@@ -184,7 +216,7 @@ class SwarmStore:
     def list_workers(self, include_killed: bool = True) -> list[dict[str, Any]]:
         clause = "" if include_killed else " WHERE state != 'killed'"
         rows = self._conn().execute(f"SELECT * FROM workers{clause} ORDER BY name ASC").fetchall()
-        return [{k: v for k, v in dict(r).items() if k != "worker_token"} for r in rows]
+        return [_public_worker(r) for r in rows]
 
     def verify_worker_token(self, token: str, expected_name: str | None = None) -> str:
         if not isinstance(token, str) or not token:
@@ -200,31 +232,32 @@ class SwarmStore:
     def post_message(self, sender: str, body: str, token: str | None = None) -> dict[str, Any]:
         if not isinstance(body, str) or not body.strip():
             raise ValueError("Message body must be non-empty")
-        if token is not None:
-            self.verify_worker_token(token, expected_name=sender)
-        elif self._conn().execute("SELECT 1 FROM workers WHERE name = ?", (sender,)).fetchone() is not None:
-            raise PermissionError(f"Worker sender {sender!r} requires a valid worker token")
-        elif sender not in UNAUTH_SENDERS:
-            raise ValueError(f"Unauthenticated sender {sender!r} not in {sorted(UNAUTH_SENDERS)}")
         with self._write_tx() as conn:
+            if token is not None:
+                self.verify_worker_token(token, expected_name=sender)
+            elif conn.execute("SELECT 1 FROM workers WHERE name = ?", (sender,)).fetchone() is not None:
+                raise PermissionError(f"Worker sender {sender!r} requires a valid worker token")
+            elif sender not in UNAUTH_SENDERS:
+                raise ValueError(f"Unauthenticated sender {sender!r} not in {sorted(UNAUTH_SENDERS)}")
             cur = conn.execute("INSERT INTO messages (sender, body, mentions_json, created_at) VALUES (?, ?, ?, ?)",
                                (sender, body, json.dumps(parse_mentions(body)), _now_iso()))
             return _msg_from_row(conn.execute("SELECT * FROM messages WHERE seq = ?", (cur.lastrowid,)).fetchone())
 
-    def read_board(self, since: int | None = None, limit: int = 20, seqs: list[int] | None = None, status: bool = False) -> dict[str, Any]:
-        conn = self._conn()
-        head_seq = int(conn.execute("SELECT COALESCE(MAX(seq), 0) FROM messages").fetchone()[0])
-        if status:
-            meta = self.get_meta()
-            return {"swarm_id": meta["swarm_id"], "title": meta["title"], "head_seq": head_seq, "workers": self.list_workers(True)}
-        if seqs is not None:
-            rows = conn.execute(f"SELECT * FROM messages WHERE seq IN ({','.join('?' for _ in seqs)}) ORDER BY seq ASC",
-                                [int(s) for s in seqs]).fetchall() if seqs else []
-        elif since is not None:
-            rows = conn.execute("SELECT * FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?", (int(since), max(0, int(limit)))).fetchall()
-        else:
-            rows = list(reversed(conn.execute("SELECT * FROM messages ORDER BY seq DESC LIMIT ?", (max(0, int(limit)),)).fetchall()))
-        return {"messages": [_msg_from_row(r) for r in rows], "head_seq": head_seq}
+    def read_board(self, since: int | None = None, limit: int = 20, seqs: Iterable[int] | None = None, status: bool = False) -> dict[str, Any]:
+        with self._read_tx() as conn:
+            head_seq = int(conn.execute("SELECT COALESCE(MAX(seq), 0) FROM messages").fetchone()[0])
+            if status:
+                meta = self.get_meta()
+                return {"swarm_id": meta["swarm_id"], "title": meta["title"], "head_seq": head_seq, "workers": self.list_workers(True)}
+            if seqs is not None:
+                seq_ids = [int(s) for s in seqs]
+                rows = conn.execute(f"SELECT * FROM messages WHERE seq IN ({','.join('?' for _ in seq_ids)}) ORDER BY seq ASC",
+                                    seq_ids).fetchall() if seq_ids else []
+            elif since is not None:
+                rows = conn.execute("SELECT * FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?", (int(since), max(0, int(limit)))).fetchall()
+            else:
+                rows = list(reversed(conn.execute("SELECT * FROM messages ORDER BY seq DESC LIMIT ?", (max(0, int(limit)),)).fetchall()))
+            return {"messages": [_msg_from_row(r) for r in rows], "head_seq": head_seq}
 
     def claim_runnable_workers(self, limit: int | None = None) -> list[dict[str, Any]]:
         with self._write_tx() as conn:
@@ -268,7 +301,7 @@ class SwarmStore:
             new_seq = max(int(row["last_seen_seq"]), int(delivered_max_seq))
             conn.execute("UPDATE workers SET state = ?, pid = NULL, turn_count = turn_count + 1, last_seen_seq = ?, session_id = ?, fork_session_id = '', transcript_seed = '', updated_at = ? WHERE name = ?",
                          (new_state, new_seq, session_id or row["session_id"], _now_iso(), name))
-            return dict(self._require_worker_row(conn, name))
+            return _public_worker(self._require_worker_row(conn, name))
 
     def switch_model(self, name: str, model: str) -> dict[str, Any]:
         if not isinstance(model, str) or not model.strip():
@@ -278,7 +311,7 @@ class SwarmStore:
             if row["state"] not in ("waiting", "stopped"):
                 raise ValueError(f"Cannot switch model while worker {name!r} is in state {row['state']!r}")
             conn.execute("UPDATE workers SET model = ?, updated_at = ? WHERE name = ?", (model.strip(), _now_iso(), name))
-            return dict(self._require_worker_row(conn, name))
+            return _public_worker(self._require_worker_row(conn, name))
 
     def mark_killing(self, name: str) -> dict[str, Any]:
         with self._write_tx() as conn:
@@ -286,13 +319,13 @@ class SwarmStore:
             if row["state"] == "killed":
                 raise ValueError(f"Worker {name!r} is already killed")
             conn.execute("UPDATE workers SET state = 'killing', updated_at = ? WHERE name = ?", (_now_iso(), name))
-            return dict(self._require_worker_row(conn, name))
+            return _public_worker(self._require_worker_row(conn, name))
 
     def mark_killed(self, name: str) -> dict[str, Any]:
         with self._write_tx() as conn:
             self._require_worker_row(conn, name)
             conn.execute("UPDATE workers SET state = 'killed', pid = NULL, updated_at = ? WHERE name = ?", (_now_iso(), name))
-            return dict(self._require_worker_row(conn, name))
+            return _public_worker(self._require_worker_row(conn, name))
 
     def mark_stopped(self, name: str, delivered_max_seq: int, error: str = "") -> dict[str, Any]:
         with self._write_tx() as conn:
@@ -301,18 +334,20 @@ class SwarmStore:
             new_seq = max(int(row["last_seen_seq"]), int(delivered_max_seq))
             conn.execute("UPDATE workers SET state = ?, pid = NULL, turn_count = turn_count + 1, last_seen_seq = ?, last_error = ?, updated_at = ? WHERE name = ?",
                          (new_state, new_seq, error, _now_iso(), name))
-            return dict(self._require_worker_row(conn, name))
+            return _public_worker(self._require_worker_row(conn, name))
 
     def get_unread_delta(self, name: str, up_to_seq: int | None = None) -> list[dict[str, Any]]:
-        worker = self.get_worker(name)
-        if worker is None:
-            raise ValueError(f"Unknown worker: {name!r}")
-        last_seen = int(worker["last_seen_seq"])
-        sql = "SELECT * FROM messages WHERE seq > ?" + (" AND seq <= ? ORDER BY seq ASC" if up_to_seq is not None else " ORDER BY seq ASC")
-        params = (last_seen, int(up_to_seq)) if up_to_seq is not None else (last_seen,)
-        return [_msg_from_row(r) for r in self._conn().execute(sql, params).fetchall()]
+        with self._read_tx() as conn:
+            worker = self.get_worker(name)
+            if worker is None:
+                raise ValueError(f"Unknown worker: {name!r}")
+            last_seen = int(worker["last_seen_seq"])
+            sql = "SELECT * FROM messages WHERE seq > ?" + (" AND seq <= ? ORDER BY seq ASC" if up_to_seq is not None else " ORDER BY seq ASC")
+            params = (last_seen, int(up_to_seq)) if up_to_seq is not None else (last_seen,)
+            return [_msg_from_row(r) for r in conn.execute(sql, params).fetchall()]
 
     def get_transcript_seed(self, name: str, max_bytes: int = MAX_SEED_BYTES) -> str:
+        capped_bytes = max(0, int(max_bytes))
         if name != "coordinator" and self.get_worker(name) is None:
             raise ValueError(f"Unknown worker for transcript seed: {name!r}")
         all_msgs = [_msg_from_row(r) for r in self._conn().execute("SELECT * FROM messages ORDER BY seq ASC").fetchall()]
@@ -324,4 +359,4 @@ class SwarmStore:
         lines = [f"=== Initial Brief ===\n{brief}\n=== Recent Messages ===\n"] + [
             f"[{m['sender']} (#{m['seq']})]: {m['body']}\n" for m in recent
         ]
-        return "".join(lines).encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+        return "".join(lines).encode("utf-8")[:capped_bytes].decode("utf-8", errors="ignore")

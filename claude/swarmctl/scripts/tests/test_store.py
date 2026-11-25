@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -27,11 +28,14 @@ class TestSwarmStore(unittest.TestCase):
         self.assertEqual(validate_ident("s_1-a", "swarm"), "s_1-a")
         self.assertEqual(validate_ident("worker-1", "worker"), "worker-1")
 
-        for bad_swarm in ["", "../evil", "UPPER", "-start", "_start", "a" * 33, "bad/id"]:
+        for bad_swarm in ["", "../evil", "UPPER", "-start", "_start", "a" * 33, "bad/id", "default\n", "s1\r\n"]:
             with self.assertRaises(ValueError, msg=f"expected failure for {bad_swarm!r}"):
                 validate_ident(bad_swarm, "swarm")
 
-        for bad_worker in ["", "../evil", "UPPER", "-w", "a" * 25, "all", "coordinator", "system"]:
+        for bad_worker in [
+            "", "../evil", "UPPER", "-w", "a" * 25, "all", "coordinator", "system",
+            "w1\n", "coordinator\n", "all\n", "system\n",
+        ]:
             with self.assertRaises(ValueError, msg=f"expected failure for {bad_worker!r}"):
                 validate_ident(bad_worker, "worker")
 
@@ -45,9 +49,19 @@ class TestSwarmStore(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.store.get_meta()
 
+        with self.assertRaises(ValueError):
+            self.store.init_swarm("default", str(self.root), max_concurrent=0)
+        with self.assertRaises(ValueError):
+            self.store.init_swarm("default", str(self.root), max_turns=0)
+
         meta = self.store.init_swarm("default", str(self.root), title="Test Swarm")
         self.assertEqual(meta["swarm_id"], "default")
         self.assertEqual(meta["title"], "Test Swarm")
+
+        # Idempotent re-init on same swarm_id updates title/default_model
+        meta2 = self.store.init_swarm("default", str(self.root), title="", default_model="sonnet")
+        self.assertEqual(meta2["title"], "Test Swarm")
+        self.assertEqual(meta2["default_model"], "sonnet")
 
         with self.assertRaises(ValueError):
             self.store.init_swarm("other", str(self.root))
@@ -64,8 +78,17 @@ class TestSwarmStore(unittest.TestCase):
         self.assertEqual(w1["brief_seq"], 1)
         self.assertTrue(w1["worker_token"])
 
+        # share mode requires non-empty workspace_path; invalid sender or duplicate worker rolls back cleanly
+        with self.assertRaises(ValueError):
+            self.store.add_worker("w-share", "share task", workspace_mode="share", workspace_path="")
+        with self.assertRaises(ValueError):
+            self.store.add_worker("w-bad-sender", "task", sender="w-bad-sender")
+        with self.assertRaises(ValueError):
+            self.store.add_worker("w-bad-fork", "task", fork_from="nonexistent")
         with self.assertRaises(ValueError):
             self.store.add_worker("w1", "duplicate active worker")
+        self.assertEqual(len(self.store.list_workers()), 1)
+        self.assertEqual(self.store.read_board()["head_seq"], 1)
 
         p2 = self.store.post_message("coordinator", "@w1 follow up")
         p3 = self.store.post_message("human", "general note @all")
@@ -81,8 +104,8 @@ class TestSwarmStore(unittest.TestCase):
         res_since = self.store.read_board(since=1, limit=1)
         self.assertEqual([m["seq"] for m in res_since["messages"]], [2])
 
-        # seqs mode: exact matches ascending, ignoring missing
-        res_seqs = self.store.read_board(seqs=[3, 1, 99], since=2, limit=1)
+        # seqs mode: accepts both lists and single-pass generators/iterators
+        res_seqs = self.store.read_board(seqs=(s for s in [3, 1, 99]), since=2, limit=1)
         self.assertEqual([m["seq"] for m in res_seqs["messages"]], [1, 3])
 
         # status mode: never exposes worker_token
@@ -94,7 +117,7 @@ class TestSwarmStore(unittest.TestCase):
         self.assertNotIn("worker_token", res_status["workers"][0])
         self.assertNotIn("worker_token", self.store.list_workers()[0])
 
-    def test_concurrent_16_threads_wal_writes(self) -> None:
+    def test_concurrent_16_threads_wal_writes_and_clean_close(self) -> None:
         self.store.init_swarm("default", str(self.root))
         w1 = self.store.add_worker("w1", "initial brief")
         token = w1["worker_token"]
@@ -110,6 +133,10 @@ class TestSwarmStore(unittest.TestCase):
                         self.store.post_message("coordinator", f"coord-{idx}-{j} @w1")
                     else:
                         self.store.post_message("w1", f"w1-{idx}-{j} @coordinator", token=token)
+                    snap = self.store.read_board(limit=5)
+                    for m in snap["messages"]:
+                        if m["seq"] > snap["head_seq"]:
+                            raise AssertionError(f"Snapshot inversion: seq {m['seq']} > head {snap['head_seq']}")
             except Exception as exc:  # pragma: no cover
                 errors.append(exc)
 
@@ -124,38 +151,39 @@ class TestSwarmStore(unittest.TestCase):
         self.assertEqual(board["head_seq"], 81)
         self.assertEqual([m["seq"] for m in board["messages"]], list(range(1, 82)))
 
+        # Verify all worker-thread connections were tracked and close cleanly from main thread (H1)
+        tracked_conns = list(self.store._conns)
+        self.assertGreaterEqual(len(tracked_conns), 17)
+        self.store.close()
+        for c in tracked_conns:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                c.execute("SELECT 1")
+
     def test_token_auth_and_anti_spoofing(self) -> None:
         self.store.init_swarm("default", str(self.root))
         w1 = self.store.add_worker("w1", "task 1")
         w2 = self.store.add_worker("w2", "task 2")
 
-        # Valid worker token posting as self
         msg = self.store.post_message("w1", "hello @coordinator", token=w1["worker_token"])
         self.assertEqual(msg["sender"], "w1")
 
-        # Spoofing another worker or coordinator with w1's token
         with self.assertRaises(PermissionError):
             self.store.post_message("w2", "spoof w2", token=w1["worker_token"])
         with self.assertRaises(PermissionError):
             self.store.post_message("coordinator", "spoof coord", token=w1["worker_token"])
         with self.assertRaises(PermissionError):
             self.store.post_message("w1", "bad token", token="invalid-token")
-
-        # Unauthenticated call trying to impersonate registered worker
         with self.assertRaises(PermissionError):
             self.store.post_message("w1", "no token", token=None)
-
-        # Unauthenticated call with unknown sender
         with self.assertRaises(ValueError):
             self.store.post_message("stranger", "hello", token=None)
-
-        # Empty body rejected
         with self.assertRaises(ValueError):
             self.store.post_message("coordinator", "   ")
 
-        # Killed worker token rejected
-        self.store.mark_killing("w2")
-        self.store.mark_killed("w2")
+        k_ing = self.store.mark_killing("w2")
+        k_ed = self.store.mark_killed("w2")
+        self.assertNotIn("worker_token", k_ing)
+        self.assertNotIn("worker_token", k_ed)
         with self.assertRaises(PermissionError):
             self.store.post_message("w2", "ghost post", token=w2["worker_token"])
 
@@ -163,47 +191,45 @@ class TestSwarmStore(unittest.TestCase):
         self.store.init_swarm("default", str(self.root), max_concurrent=1, max_turns=2)
         w1 = self.store.add_worker("w1", "brief 1")
 
-        # Claim 1: triggered by brief #1
         claimed = self.store.claim_runnable_workers()
         self.assertEqual(len(claimed), 1)
         self.assertEqual(claimed[0]["name"], "w1")
         self.assertEqual(claimed[0]["state"], "working")
         self.assertEqual(claimed[0]["delivered_max_seq"], 1)
 
-        # While w1 is working, add w2 -> max_concurrent=1 blocks claiming w2
         w2 = self.store.add_worker("w2", "brief 2")
         self.assertEqual(self.store.claim_runnable_workers(), [])
 
         # Mid-turn message #3 arrives for w1 while w1 is working on delivered_max_seq=1
         self.store.post_message("coordinator", "@w1 mid-turn update")
-        # w1 also posts @all and @w1 (#4) during its turn
         self.store.post_message("w1", "@all @w1 my interim note", token=w1["worker_token"])
 
-        # Complete w1's first turn with delivered_max_seq=1
         done1 = self.store.complete_turn("w1", delivered_max_seq=1, session_id="sess-1")
+        self.assertNotIn("worker_token", done1)
         self.assertEqual(done1["state"], "waiting")
         self.assertEqual(done1["last_seen_seq"], 1)
         self.assertEqual(done1["turn_count"], 1)
         self.assertEqual(done1["session_id"], "sess-1")
 
-        # Unread delta for w1 up to seq 3 includes #2 and #3
         delta = self.store.get_unread_delta("w1", up_to_seq=3)
         self.assertEqual([m["seq"] for m in delta], [2, 3])
 
-        # Next claim: w2 has oldest unread mention (#2), w1 has #3; max_concurrent=1 claims w2 first
         claimed2 = self.store.claim_runnable_workers()
         self.assertEqual([w["name"] for w in claimed2], ["w2"])
         self.assertEqual(claimed2[0]["delivered_max_seq"], 4)
-        self.store.complete_turn("w2", delivered_max_seq=claimed2[0]["delivered_max_seq"])
 
-        # w2 posts @all (#5) -> should NOT wake w2 itself, only w1 (which also has #3)
-        self.store.post_message("w2", "@all status from w2", token=w2["worker_token"])
+        # Transitioning w2 to killing still counts against max_concurrent=1
+        self.store.mark_killing("w2")
+        self.assertEqual(self.store.claim_runnable_workers(), [])
+        self.store.mark_killed("w2")
+
+        # Now slot is free -> w1 claims up to seq 4
         claimed3 = self.store.claim_runnable_workers()
         self.assertEqual([w["name"] for w in claimed3], ["w1"])
-        self.assertEqual(claimed3[0]["delivered_max_seq"], 5)
-        self.store.complete_turn("w1", delivered_max_seq=5)
+        self.assertEqual(claimed3[0]["delivered_max_seq"], 4)
+        self.store.complete_turn("w1", delivered_max_seq=4)
 
-        # w1 now has turn_count == 2 == max_turns; new mention #6 must not claim w1
+        # w1 now has turn_count == 2 == max_turns; new mention #5 must not claim w1
         self.store.post_message("coordinator", "@w1 after max turns")
         self.assertEqual(self.store.claim_runnable_workers(), [])
 
@@ -213,7 +239,6 @@ class TestSwarmStore(unittest.TestCase):
         self.store.set_worker_pid("parent", 12345)
         self.assertEqual(self.store.get_worker("parent")["pid"], 12345)
 
-        # Claim and complete turn 1 on parent so it gets session_id
         c = self.store.claim_runnable_workers()
         self.assertEqual(len(c), 1)
         self.store.complete_turn("parent", delivered_max_seq=c[0]["delivered_max_seq"], session_id="claude-sid-99")
@@ -223,13 +248,12 @@ class TestSwarmStore(unittest.TestCase):
         self.assertEqual(child_same["fork_session_id"], "claude-sid-99")
         self.assertEqual(child_same["transcript_seed"], "")
 
-        # Complete turn 1 on child-same -> clears fork_session_id
         c_child = self.store.claim_runnable_workers(limit=1)
         self.assertEqual(c_child[0]["name"], "child-same")
         after_turn = self.store.complete_turn("child-same", delivered_max_seq=c_child[0]["delivered_max_seq"])
         self.assertEqual(after_turn["fork_session_id"], "")
 
-        # Cross-CWD or non-claude fork + oversized multibyte message -> UTF-8 safe transcript_seed <= 4096B
+        # Cross-CWD fork + oversized multibyte message -> UTF-8 safe transcript_seed <= 4096B, cleared after turn 1
         big_body = "@parent " + ("é" * 3000)
         self.store.post_message("coordinator", big_body)
         other_dir = self.root / "worktree-child"
@@ -246,6 +270,7 @@ class TestSwarmStore(unittest.TestCase):
         self.assertGreater(len(seed_bytes), 0)
         self.assertLessEqual(len(seed_bytes), 4096)
         self.assertIn("=== Initial Brief ===", child_cross["transcript_seed"])
+        self.assertEqual(self.store.get_transcript_seed("parent", max_bytes=-5), "")
 
         # Coordinator fork also populates transcript_seed; unknown fork_from fails
         child_coord = self.store.add_worker("child-coord", "help coord", fork_from="coordinator")
@@ -253,24 +278,50 @@ class TestSwarmStore(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.add_worker("child-bad", "bad fork", fork_from="missing-worker")
 
-        # switch_model allowed in waiting/stopped, rejected in working/killing/killed
-        self.assertEqual(self.store.switch_model("child-same", "opus")["model"], "opus")
-        self.store.mark_stopped("child-same", delivered_max_seq=after_turn["last_seen_seq"], error="boom")
-        self.assertEqual(self.store.get_worker("child-same")["state"], "stopped")
-        self.assertEqual(self.store.switch_model("child-same", "sonnet")["model"], "sonnet")
+        # Claim and complete turn 1 on child-cross -> clears transcript_seed
+        claimed_cross = [w for w in self.store.claim_runnable_workers() if w["name"] == "child-cross"][0]
+        done_cross = self.store.complete_turn("child-cross", delivered_max_seq=claimed_cross["delivered_max_seq"])
+        self.assertEqual(done_cross["transcript_seed"], "")
 
-        # Claim child-cross so it is working -> switch_model fails
-        self.store.claim_runnable_workers()
-        with self.assertRaises(ValueError):
-            self.store.switch_model("child-cross", "haiku")
+        # Complete child-coord turn too so board is idle
+        for w in list(self.store.list_workers()):
+            if w["state"] == "working":
+                self.store.complete_turn(w["name"], delivered_max_seq=99)
 
-        # mark_killing while working -> complete_turn & mark_stopped preserve killing
-        self.store.mark_killing("child-cross")
-        self.assertEqual(self.store.complete_turn("child-cross", delivered_max_seq=99)["state"], "killing")
-        self.assertEqual(self.store.mark_stopped("child-cross", delivered_max_seq=99, error="term")["state"], "killing")
-        self.store.mark_killed("child-cross")
+        # mark_stopped halts without crash-looping, then wakes on a newer post (INV-4)
+        self.store.post_message("coordinator", "@child-same trigger crash turn")
+        crashing = self.store.claim_runnable_workers()[0]
+        self.assertEqual(crashing["name"], "child-same")
+        stopped = self.store.mark_stopped("child-same", delivered_max_seq=crashing["delivered_max_seq"], error="boom")
+        self.assertNotIn("worker_token", stopped)
+        self.assertEqual(stopped["state"], "stopped")
+        self.assertEqual(self.store.claim_runnable_workers(), [])
+
+        # Newer post wakes stopped worker
+        self.store.post_message("coordinator", "@child-same retry after fix")
+        rewoken = self.store.claim_runnable_workers()
+        self.assertEqual([w["name"] for w in rewoken], ["child-same"])
+
+        # switch_model state guards (waiting/stopped allowed; working/killing/killed or empty model rejected)
         with self.assertRaises(ValueError):
-            self.store.mark_killing("child-cross")
+            self.store.switch_model("child-same", "haiku")
+        self.store.mark_stopped("child-same", delivered_max_seq=rewoken[0]["delivered_max_seq"], error="stop2")
+        sw = self.store.switch_model("child-same", "sonnet")
+        self.assertNotIn("worker_token", sw)
+        self.assertEqual(sw["model"], "sonnet")
+        with self.assertRaises(ValueError):
+            self.store.switch_model("child-same", "   ")
+
+        self.store.mark_killing("child-same")
+        with self.assertRaises(ValueError):
+            self.store.switch_model("child-same", "opus")
+        self.assertEqual(self.store.complete_turn("child-same", delivered_max_seq=99)["state"], "killing")
+        self.assertEqual(self.store.mark_stopped("child-same", delivered_max_seq=99, error="term")["state"], "killing")
+        self.store.mark_killed("child-same")
+        with self.assertRaises(ValueError):
+            self.store.switch_model("child-same", "opus")
+        with self.assertRaises(ValueError):
+            self.store.mark_killing("child-same")
 
 
 if __name__ == "__main__":
