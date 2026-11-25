@@ -442,5 +442,163 @@ class TestMcpParity(_Base):
                     self.assertIn((node.module or "").split(".")[0], sys.stdlib_module_names)
 
 
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+class TestPackagingCUJ6(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name).resolve()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.bin = self.tmp / "bin"
+        self.skills = self.tmp / "skills"
+        self.launcher = REPO_ROOT / "claude/swarmctl/scripts/bin/swarmctl"
+        self.skill_src = REPO_ROOT / "claude/swarmctl/skills/swarmctl"
+
+    def run_install(self, *args):
+        env = {**os.environ, "HOME": str(self.home)}
+        return subprocess.run(["bash", "install.sh", *args], cwd=REPO_ROOT, env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def assert_home_clean(self):
+        for d in (".claude", ".gemini"):
+            self.assertFalse((self.home / d).exists(), d)
+
+    # --- static packaging ---
+    def test_plugin_json(self):
+        import swarmctl
+        data = json.loads((REPO_ROOT / "claude/swarmctl/.claude-plugin/plugin.json").read_text())
+        self.assertEqual(data["name"], "swarmctl")
+        self.assertEqual(data["version"], swarmctl.__version__)
+        srv = data["mcpServers"]["swarmctl"]
+        self.assertEqual(srv["command"], "${CLAUDE_PLUGIN_ROOT}/scripts/bin/swarmctl")
+        self.assertEqual(srv["args"], ["mcp"])
+        self.assertTrue(self.launcher.is_file())
+        self.assertTrue(os.access(self.launcher, os.X_OK))
+
+    def test_marketplace_json(self):
+        data = json.loads((REPO_ROOT / ".claude-plugin/marketplace.json").read_text())
+        by_name = {p["name"]: p for p in data["plugins"]}
+        self.assertEqual(by_name["swarmctl"]["source"], "./claude/swarmctl")
+        self.assertEqual(by_name["swarmctl"]["category"], "development")
+        for n in ("deep-review", "build-loop", "egm-runbook"):
+            self.assertEqual(by_name[n]["source"], f"./claude/{n}")
+
+    def test_skill_frontmatter(self):
+        text = (self.skill_src / "SKILL.md").read_text()
+        self.assertTrue(text.startswith("---"))
+        head = text.split("---", 2)[1]
+        self.assertIn("name: swarmctl", head)
+        desc = [l for l in head.splitlines() if l.startswith("description:")]
+        self.assertTrue(desc and desc[0][len("description:"):].strip())
+
+    def test_gitignore_and_portability(self):
+        lines = (REPO_ROOT / ".gitignore").read_text().splitlines()
+        self.assertIn(".swarm/", lines)
+        self.assertIn("swarmctl", (REPO_ROOT / "docs/PORTABILITY.md").read_text())
+
+    # --- hermetic installer ---
+    def test_status_default_runs(self):
+        r = self.run_install("--status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("swarmctl", r.stdout)
+        self.assert_home_clean()
+
+    def test_skills_only_swarmctl(self):
+        r = self.run_install("--skills", str(self.skills), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        link = self.skills / "swarmctl"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), self.skill_src.resolve())
+        self.assertIn("swarmctl mcp", r.stdout)
+
+    def test_bin_dir_only(self):
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        link = self.bin / "swarmctl"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), self.launcher.resolve())
+        out = subprocess.run([str(link), "models", "--json"], capture_output=True,
+                             text=True, timeout=30, env={**os.environ, "HOME": str(self.home)})
+        self.assertEqual(json.loads(out.stdout)["default_runner"], "claude")
+        self.assert_home_clean()
+        r2 = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertIn("already linked", r2.stdout)
+
+    def test_bin_dir_backs_up_foreign_symlink_and_file(self):
+        self.bin.mkdir()
+        dst = self.bin / "swarmctl"
+        backups = self.home / ".cache/ai-plugins-backups"
+        dst.symlink_to("/bin/true")
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(dst.resolve(), self.launcher.resolve())
+        self.assertEqual(len(list(backups.glob("swarmctl.bak.*"))), 1)
+        for b in backups.glob("swarmctl.bak.*"):
+            b.unlink()
+        dst.unlink()
+        dst.write_text("#!/bin/sh\n")
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(dst.is_symlink())
+        self.assertEqual(dst.resolve(), self.launcher.resolve())
+        self.assertEqual(len(list(backups.glob("swarmctl.bak.*"))), 1)
+
+    def test_bin_dir_copy_mode_still_symlinks(self):
+        r = self.run_install("--copy", "--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.bin / "swarmctl").is_symlink())
+
+    def test_skills_plus_bin_dir_no_double_link(self):
+        r = self.run_install("--skills", str(self.skills), "--bin-dir", str(self.bin),
+                             "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.skills / "swarmctl").is_symlink())
+        self.assertTrue((self.bin / "swarmctl").is_symlink())
+        self.assertEqual(r.stdout.count("Bin: linked"), 1)
+
+    def test_bin_dir_no_match_exit_1(self):
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "nonexistent")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no binaries matched", r.stderr)
+
+    def test_bin_dir_bad_values(self):
+        for args in (["--bin-dir"], ["--bin-dir="], ["--bin-dir", "-x"]):
+            r = self.run_install(*args)
+            self.assertEqual(r.returncode, 1, args)
+
+    def test_uninstall_clean(self):
+        flags = ["--skills", str(self.skills), "--bin-dir", str(self.bin), "--only", "swarmctl"]
+        self.assertEqual(self.run_install(*flags).returncode, 0)
+        r = self.run_install(*flags, "--uninstall")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((self.skills / "swarmctl").exists())
+        self.assertFalse((self.bin / "swarmctl").is_symlink())
+        # foreign file is left alone
+        (self.bin / "swarmctl").write_text("keep")
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl", "--uninstall")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.bin / "swarmctl").read_text(), "keep")
+
+    def test_status_bin_dir(self):
+        args = ("--bin-dir", str(self.bin), "--only", "swarmctl")
+        r = self.run_install(*args, "--status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("[missing]", r.stdout)
+        self.assertFalse(self.bin.exists())
+        self.assertEqual(self.run_install(*args).returncode, 0)
+        r = self.run_install(*args, "--status")
+        self.assertIn("[linked]", r.stdout)
+
+    def test_bin_dir_does_not_touch_antigravity(self):
+        r = self.run_install("--bin-dir", str(self.bin), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assert_home_clean()
+
+
 if __name__ == "__main__":
     unittest.main()

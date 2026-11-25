@@ -27,6 +27,12 @@
       "description": "Per-feature runbook for the egm design steps and the superpowers build steps: tracks state, gives the next command, and blocks code and build skills until the egm review is concluded.",
       "source": "./claude/egm-runbook",
       "category": "development"
+    },
+    {
+      "name": "swarmctl",
+      "description": "Minimal local multi-agent swarm: spawn background workers on Claude or other CLIs, coordinate through a shared board via MCP tools or a UNIX CLI.",
+      "source": "./claude/swarmctl",
+      "category": "development"
     }
   ]
 }

@@ -5,6 +5,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AG_DEST="${HOME}/.gemini/config/plugins"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
 SKILLS_DEST=""
+BIN_DEST="${HOME}/.local/bin"
+BIN_EXPLICIT=0
 
 MODE="link"
 TARGET="all"
@@ -29,6 +31,7 @@ Target Options (pick at most one):
   --codex               Shorthand for --skills ~/.codex/skills
   --gemini-cli          Shorthand for --skills ~/.gemini/skills
   --opencode            Shorthand for --skills ~/.config/opencode/skills
+  --bin-dir <dir>       Symlink CLI binaries (swarmctl) into <dir> (default ~/.local/bin; combinable with any target)
   --only <csv>          Comma-separated plugin or skill names to filter install
                         (e.g., --only deep-review,lean-design or --only build-loop)
 
@@ -46,6 +49,7 @@ Examples:
   ./install.sh --antigravity --copy                 # Standalone Antigravity copy
   ./install.sh --codex                              # Portable skills -> ~/.codex/skills
   ./install.sh --skills .cursor/skills --only deep-review,lean-design
+  ./install.sh --bin-dir ~/.local/bin --only swarmctl
 USAGE
 }
 
@@ -106,6 +110,26 @@ while [[ $# -gt 0 ]]; do
       fi
       ONLY_FILTER="${val}"
       ;;
+    --bin-dir)
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "Option --bin-dir requires a non-empty directory path." >&2
+        usage >&2
+        exit 1
+      fi
+      BIN_DEST="$2"
+      BIN_EXPLICIT=1
+      shift
+      ;;
+    --bin-dir=*)
+      val="${1#*=}"
+      if [[ -z "${val}" || "${val}" == -* ]]; then
+        echo "Option --bin-dir requires a non-empty directory path." >&2
+        usage >&2
+        exit 1
+      fi
+      BIN_DEST="${val}"
+      BIN_EXPLICIT=1
+      ;;
     --link)        MODE="link" ;;
     --copy)        MODE="copy" ;;
     --status)      ACTION="status" ;;
@@ -125,6 +149,12 @@ SKILL_CATALOG=(
   "lean-design|lean-runbook|antigravity/lean-runbook/skills/lean-design|yes"
   "lean-runbook|lean-runbook|antigravity/lean-runbook/skills/lean-runbook|yes"
   "runbook|egm-runbook|claude/egm-runbook/skills/runbook|no"
+  "swarmctl|swarmctl|claude/swarmctl/skills/swarmctl|yes"
+)
+
+# CLI binary registry: "bin_name|plugin_group|relative_source_path"
+BIN_CATALOG=(
+  "swarmctl|swarmctl|claude/swarmctl/scripts/bin/swarmctl"
 )
 
 matches_filter() {
@@ -152,6 +182,10 @@ resolve_path_abs() {
   fi
   echo "${p}"
 }
+
+if [[ "${BIN_EXPLICIT}" -eq 1 ]]; then
+  BIN_DEST="$(resolve_path_abs "${BIN_DEST}")"
+fi
 
 link_or_copy_dir() {
   local label="$1"
@@ -257,7 +291,85 @@ status_skills() {
   done
 }
 
+status_bin() {
+  echo "CLI binaries (${BIN_DEST}):"
+  local entry name group rel src dst target
+  for entry in "${BIN_CATALOG[@]}"; do
+    IFS='|' read -r name group rel <<< "${entry}"
+    matches_filter "${name}" "${group}" || continue
+    src="${REPO_DIR}/${rel}"
+    dst="${BIN_DEST}/${name}"
+    if [[ -L "${dst}" ]]; then
+      target="$(readlink -f "${dst}")"
+      if [[ "${target}" == "${src}" ]]; then
+        echo "  [linked]   ${name} -> ${target}"
+      else
+        echo "  [symlink]  ${name} -> ${target} (points elsewhere)"
+      fi
+    elif [[ -e "${dst}" ]]; then
+      echo "  [file]     ${name} (standalone file)"
+    else
+      echo "  [missing]  ${name}"
+    fi
+  done
+}
+
 TOTAL_INSTALLED=0
+
+install_bin() {
+  local installed=0
+  local entry name group rel src dst
+  for entry in "${BIN_CATALOG[@]}"; do
+    IFS='|' read -r name group rel <<< "${entry}"
+    matches_filter "${name}" "${group}" || continue
+    src="${REPO_DIR}/${rel}"
+    if [[ ! -x "${src}" ]]; then
+      echo "Bin: source not executable: ${src}" >&2
+      return 1
+    fi
+    mkdir -p "${BIN_DEST}"
+    dst="${BIN_DEST}/${name}"
+    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+      echo "Bin: ${name} already linked -> ${src}"
+      installed=$((installed + 1))
+      continue
+    fi
+    if [[ -L "${dst}" || -e "${dst}" ]]; then
+      local backup_dir="${HOME}/.cache/ai-plugins-backups"
+      mkdir -p "${backup_dir}"
+      local backup="${backup_dir}/${name}.bak.$(date +%Y%m%d-%H%M%S)"
+      mv "${dst}" "${backup}"
+      echo "Bin: backed up existing ${dst} -> ${backup}"
+    fi
+    # Always symlink, even under --copy: the launcher resolves the bundled
+    # engine via Path(__file__).resolve().parents[1].
+    ln -s "${src}" "${dst}"
+    echo "Bin: linked ${dst} -> ${src}"
+    installed=$((installed + 1))
+  done
+  TOTAL_INSTALLED=$((TOTAL_INSTALLED + installed))
+  if [[ "${installed}" -eq 0 && "${BIN_EXPLICIT}" -eq 1 ]]; then
+    echo "Bin: no binaries matched --only '${ONLY_FILTER}'" >&2
+    return 1
+  fi
+  return 0
+}
+
+uninstall_bin() {
+  local entry name group rel src dst
+  for entry in "${BIN_CATALOG[@]}"; do
+    IFS='|' read -r name group rel <<< "${entry}"
+    matches_filter "${name}" "${group}" || continue
+    src="${REPO_DIR}/${rel}"
+    dst="${BIN_DEST}/${name}"
+    if [[ -L "${dst}" && "$(readlink -f "${dst}")" == "${src}" ]]; then
+      rm "${dst}"
+      echo "Bin: removed symlink ${dst}"
+    else
+      echo "Bin: skipped ${dst} (not a symlink to this repo)"
+    fi
+  done
+}
 
 install_antigravity() {
   local installed=0
@@ -318,7 +430,7 @@ PY
 
 install_claude() {
   local plugins=()
-  for plugin in deep-review build-loop egm-runbook; do
+  for plugin in deep-review build-loop egm-runbook swarmctl; do
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -359,7 +471,7 @@ install_claude() {
 
 uninstall_claude() {
   local plugins=()
-  for plugin in egm-runbook build-loop deep-review; do
+  for plugin in swarmctl egm-runbook build-loop deep-review; do
     if matches_filter "${plugin}"; then
       plugins+=("${plugin}")
     fi
@@ -389,6 +501,7 @@ install_skills() {
   local saw_egm_runbook=0
   local saw_lean_design=0
   local saw_lean_runbook=0
+  local saw_swarmctl=0
 
   for entry in "${SKILL_CATALOG[@]}"; do
     IFS='|' read -r skill group rel default_inc <<< "${entry}"
@@ -405,6 +518,7 @@ install_skills() {
     [[ "${skill}" == "runbook" ]] && saw_egm_runbook=1
     [[ "${skill}" == "lean-design" ]] && saw_lean_design=1
     [[ "${skill}" == "lean-runbook" ]] && saw_lean_runbook=1
+    [[ "${skill}" == "swarmctl" ]] && saw_swarmctl=1
   done
 
   if [[ "${installed}" -eq 0 ]]; then
@@ -412,7 +526,7 @@ install_skills() {
     return 1
   fi
 
-  if [[ "${saw_build_loop}" -eq 1 || "${saw_lean_design}" -eq 1 || "${saw_lean_runbook}" -eq 1 || "${saw_egm_runbook}" -eq 1 ]]; then
+  if [[ "${saw_build_loop}" -eq 1 || "${saw_lean_design}" -eq 1 || "${saw_lean_runbook}" -eq 1 || "${saw_egm_runbook}" -eq 1 || "${saw_swarmctl}" -eq 1 ]]; then
     echo ""
     echo "Notes for non-native harnesses (see ${REPO_DIR}/docs/PORTABILITY.md):"
     if [[ "${saw_build_loop}" -eq 1 ]]; then
@@ -423,6 +537,9 @@ install_skills() {
     fi
     if [[ "${saw_lean_runbook}" -eq 1 ]]; then
       echo "  - lean-runbook: invoke scripts/runbook.py CLI from ${dest}/lean-runbook/scripts/runbook.py; Antigravity hooks/swarm/run_workflow require conversion (docs/CONVERSION-PROMPTS.md)."
+    fi
+    if [[ "${saw_swarmctl}" -eq 1 ]]; then
+      echo "  - swarmctl: SKILL.md is portable, but the MCP server and CLI need the bundled engine; run ./install.sh --bin-dir ~/.local/bin --only swarmctl, then register 'swarmctl mcp' as a stdio MCP server in your harness."
     fi
     if [[ "${saw_egm_runbook}" -eq 1 ]]; then
       echo "  - egm-runbook (runbook): CLI is at ${REPO_DIR}/claude/egm-runbook/scripts/runbook.py; hooks & '!' override require Claude Code or conversion (docs/CONVERSION-PROMPTS.md)."
@@ -448,16 +565,37 @@ uninstall_skills() {
   done
 }
 
+# BIN_ONLY: --bin-dir given without any explicit target => bin actions only
+BIN_ONLY=0
+[[ "${BIN_EXPLICIT}" -eq 1 && "${TARGET_EXPLICIT}" -eq 0 ]] && BIN_ONLY=1
+# BIN_AUTO: no --bin-dir and default/--all/--claude target => manage bin alongside claude plugin
+BIN_AUTO=0
+[[ "${BIN_EXPLICIT}" -eq 0 && ( "${TARGET}" == "all" || "${TARGET}" == "claude" ) ]] && BIN_AUTO=1
+WANT_BIN=0
+[[ "${BIN_ONLY}" -eq 1 || "${BIN_AUTO}" -eq 1 || "${BIN_EXPLICIT}" -eq 1 ]] && WANT_BIN=1
+
 case "${ACTION}" in
   status)
-    if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then status_antigravity; fi
-    if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then status_claude; fi
-    if [[ "${TARGET}" == "skills" ]]; then status_skills; fi
+    if [[ "${BIN_ONLY}" -eq 0 ]]; then
+      if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then status_antigravity; fi
+      if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then status_claude; fi
+      if [[ "${TARGET}" == "skills" ]]; then status_skills; fi
+    fi
+    if [[ "${WANT_BIN}" -eq 1 ]]; then status_bin; fi
     ;;
   install)
     rc=0
+    if [[ "${BIN_ONLY}" -eq 1 ]]; then
+      install_bin || rc=1
+      exit "${rc}"
+    fi
     if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then install_antigravity || rc=1; fi
     if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then install_claude || rc=1; fi
+    if [[ "${BIN_EXPLICIT}" -eq 1 ]]; then
+      install_bin || rc=1
+    elif [[ "${BIN_AUTO}" -eq 1 ]] && matches_filter "swarmctl" "swarmctl"; then
+      install_bin || rc=1
+    fi
     if [[ "${TARGET}" == "all" && -n "${ONLY_FILTER}" && "${TOTAL_INSTALLED}" -eq 0 ]]; then
       echo "No Antigravity or Claude Code plugins matched --only '${ONLY_FILTER}'" >&2
       rc=1
@@ -466,8 +604,11 @@ case "${ACTION}" in
     exit "${rc}"
     ;;
   uninstall)
-    if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then uninstall_antigravity; fi
-    if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then uninstall_claude; fi
-    if [[ "${TARGET}" == "skills" ]]; then uninstall_skills; fi
+    if [[ "${BIN_ONLY}" -eq 0 ]]; then
+      if [[ "${TARGET}" == "all" || "${TARGET}" == "antigravity" ]]; then uninstall_antigravity; fi
+      if [[ "${TARGET}" == "all" || "${TARGET}" == "claude" ]]; then uninstall_claude; fi
+      if [[ "${TARGET}" == "skills" ]]; then uninstall_skills; fi
+    fi
+    if [[ "${WANT_BIN}" -eq 1 ]]; then uninstall_bin; fi
     ;;
 esac

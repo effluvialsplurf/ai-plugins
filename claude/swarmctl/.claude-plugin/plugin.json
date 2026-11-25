@@ -1,0 +1,15 @@
+{
+  "name": "swarmctl",
+  "version": "0.1.0",
+  "description": "Minimal local multi-agent swarm: CLI + zero-dependency MCP server (swarm, post_message, read_board, swarm_wait).",
+  "author": {
+    "name": "effluvialsplurf"
+  },
+  "repository": "https://github.com/effluvialsplurf/ai-plugins",
+  "mcpServers": {
+    "swarmctl": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/bin/swarmctl",
+      "args": ["mcp"]
+    }
+  }
+}
