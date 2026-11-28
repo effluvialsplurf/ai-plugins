@@ -29,7 +29,7 @@ conversation—and ideally not the same model family—as the author seat.*
 | `build-loop` Concept | Claude Code Default | Harness-Agnostic Substitution |
 |---|---|---|
 | Subagent dispatch | `Agent` tool (`build-loop:planner`, `builder`, `reviewer`) | Your harness's native subagent/worker tool (e.g., Antigravity `swarm`, Codex CLI subagent, OpenCode/Cursor subagent), a CLI call (`codex exec`, `gemini -p`, `kiro-cli`, `opencode run`), or a **fresh chat session** given the brief file in `.loop/<slug>/`. |
-| `${CLAUDE_PLUGIN_ROOT}` | Installed Claude plugin directory | Local path to your cloned `ai-plugins/claude/build-loop` directory. |
+| `${CLAUDE_PLUGIN_ROOT}` | Installed Claude plugin directory | Local path to your cloned `ai-plugins/plugins/build-loop` directory. |
 | Project instructions (`CLAUDE.md`) | `CLAUDE.md` / `CLAUDE.local.md` | Your harness's persistent instruction file (`AGENTS.md`, `GEMINI.md`, `.cursor/rules`, `.windsurfrules`, `.kiro/steering/`). Add the rule: *"After compaction or restart, read `.loop/<slug>/LOOP-STATE.md` first."* |
 | Plan & build sub-skills | `superpowers:writing-plans`, `superpowers:subagent-driven-development` | Follow the stage table in `SKILL.md` directly using `templates/` (`implementer-contract.md`, `dispatch.md`, `task-review.md`, `fixer-brief.md`) — no `superpowers` plugin required. |
 | Background stall watch | `scripts/stall-watch.sh`, `scripts/watch-pr.sh` | Works anywhere with **Bash 4+** (not macOS default Bash 3.2), GNU `find`/`stat`, and `gh` CLI. |

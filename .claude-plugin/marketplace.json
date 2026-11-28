@@ -6,9 +6,6 @@
     "name": "effluvialsplurf",
     "url": "https://github.com/effluvialsplurf/ai-plugins"
   },
-  "allowCrossMarketplaceDependenciesOn": [
-    "claude-plugins-official"
-  ],
   "plugins": [
     {
       "name": "deep-review",

@@ -14,23 +14,25 @@ ai-plugins/
 ├── docs/
 │   ├── PORTABILITY.md        # Plugin-by-plugin harness & model-family verification matrix
 │   └── CONVERSION-PROMPTS.md # Copy-paste prompts to convert non-agnostic layers per model family/harness
-├── install.sh                # Installer for Antigravity, Claude Code, and any Agent Skills directory
-├── claude/
-│   ├── egm-runbook/          # Per-feature EGM design + superpowers build runbook & Claude Code hooks
-│   ├── build-loop/           # Multi-stage planned build loop (Claude/Kiro/Codex/Custom) + context-costs skill
-│   └── deep-review/          # Three-axis code review (correctness, structure, testing) + receiving-deep-review
-└── antigravity/
-    └── lean-runbook/         # Token-efficient lean-design + 5-stage lean-runbook workflow for Antigravity 2.0
+├── install.sh                # Registry-driven installer (reads marketplace.json) for Antigravity, Claude Code, Agent Skills dirs, PATH shims
+├── tools/
+│   ├── gate.sh               # Quiet verification gate: tests, manifests, hooks, agnostic grep
+│   └── check_agnostic.py     # INV-2 / INV-8 grep gate (no model IDs or install paths outside adapter files)
+└── plugins/
+    ├── lean-runbook/         # lean-design + lean-runbook; Claude Code and Antigravity 2.0 hooks, PATH shims
+    ├── swarmctl/             # Local worker swarm: CLI + stdio MCP (Claude plugin only; never an Antigravity plugin)
+    ├── build-loop/           # Multi-stage planned build loop (Claude/Kiro/Codex/Custom) + context-costs skill
+    └── deep-review/          # Three-axis code review (correctness, structure, testing) + receiving-deep-review
 ```
 
 ## Plugins & Portability Overview
 
 | Plugin | Primary Harness | Portability Verdict | What Works Anywhere vs. Needs Conversion |
 | --- | --- | --- | --- |
-| [`deep-review`](./claude/deep-review) | Claude Code *(portable)* | **Agnostic via instruction** | All rubrics (`correctness`, `structure`, `testing`), output schema, and `SKILL.md` fallbacks work on **any** harness & model family (parallel subagents or sequential fresh passes; no `superpowers` required outside Claude Code). |
-| [`build-loop`](./claude/build-loop) | Claude Code *(portable core)* | **Methodology agnostic; agents/scripts coupled** | `templates/{LOOP-STATE,FINDINGS,task-review}.md`, `setup.md`, `failure-classes.md`, `version-custom-harness.md`, `watch-pr.sh`, `stall-watch.sh` *(Bash 4+ & GNU `find`/`stat`)*, and `context-costs` Rules 1–12 work anywhere. `agents/*.md` (hardcoded Claude IDs), Claude/Kiro wording in `templates/{implementer-contract,fixer-brief,dispatch}.md`, `loop_ledger.py`/`context_breakdown.py` (Claude transcripts), and Kiro/Codex CLI wrappers require conversion for other harnesses. |
-| [`lean-runbook`](./antigravity/lean-runbook) (`lean-design` + `lean-runbook`) | Antigravity 2.0 *(portable CLI & templates)* | **Core CLI & templates agnostic; hooks/swarm Antigravity-native** | `design_check.py`, `runbook.py` CLI (`start`/`status`/`done`/`skip`/`finish`), and Markdown templates (`design.md`, `tech-plan.md`, `spec.md`, `compact-spec.md`, `contract-plan.md`, `loop-state.md`) are pure Python 3.9+ stdlib / Markdown. `SKILL.md` `swarm`/path prose, `next_guidance()` strings, `epic-ledger.md` sample models, `hooks.json`, `workflows/*.py` (`run_workflow`), and `rules/AGENTS.md` 3-pool quotas are Antigravity-native and require conversion elsewhere. |
-| [`egm-runbook`](./claude/egm-runbook) | Claude Code | **Claude Code native (requires conversion)** | `scripts/runbook.py` CLI is pure Python 3.9+ stdlib, but `hooks/hooks.json`, `!` shell-mode override, `scripts/statusline`, and `/egm:*`/`superpowers:*` step names are Claude-Code-specific. On Antigravity, use `lean-runbook` instead; on other harnesses, convert via [`docs/CONVERSION-PROMPTS.md`](./docs/CONVERSION-PROMPTS.md). |
+| [`deep-review`](./plugins/deep-review) | Claude Code *(portable)* | **Agnostic via instruction** | All rubrics, output schema, and `SKILL.md` fallbacks work on **any** harness (parallel subagents or sequential fresh passes). `superpowers` is optional; no manifest dependencies. |
+| [`build-loop`](./plugins/build-loop) | Claude Code *(portable core)* | **Methodology agnostic; scripts coupled** | Templates, `setup.md`, `failure-classes.md`, `version-custom-harness.md`, `watch-pr.sh`, `stall-watch.sh` and `context-costs` work anywhere. Agents use `model: inherit`; `loop_ledger.py`/`context_breakdown.py` (Claude transcripts) and Kiro/Codex wrappers need conversion elsewhere. |
+| [`lean-runbook`](./plugins/lean-runbook) (`lean-design` + `lean-runbook`) | Claude Code and Antigravity 2.0 | **Agnostic core; harness text in `references/harness-*.md`** | One hook adapter (`runbook.py hook`, auto-detects the payload) gates writes on both harnesses; `pre-commit` and the `lean-runbook` / `lean-design` PATH shims cover the rest. Core skills name 5 roles and a 4-tier dispatch ladder; provider detail lives in `references/harness-{claude,antigravity,generic}.md`. |
+| [`swarmctl`](./plugins/swarmctl) | any MCP-capable harness | **Agnostic (CLI + stdio MCP)** | Claude plugin via `mcpServers`; elsewhere put the `swarmctl` shim on `PATH`. Never installed into Antigravity (it would shadow the built-in `swarm`). |
 
 For the full component-by-component audit, role-to-model-family seat matrix (Anthropic Claude, Google Gemini,
 OpenAI/Codex, and Open-Weights/Local models), and single-vendor compensation rules, see
@@ -50,16 +52,14 @@ In Claude Code:
 
 ```text
 /plugin marketplace add google/elephant-goldfish-model
-/plugin install egm@egm
-/plugin install superpowers@claude-plugins-official
-
 /plugin marketplace add effluvialsplurf/ai-plugins
 /plugin install deep-review@ai-plugins
 /plugin install build-loop@ai-plugins
-/plugin install egm-runbook@ai-plugins
+/plugin install lean-runbook@ai-plugins
+/plugin install swarmctl@ai-plugins
 ```
 
-*(Install only the plugin(s) you want — e.g., `deep-review@ai-plugins` alone requires only `superpowers@claude-plugins-official`, and `egm@egm` is only needed for `egm-runbook`.)* Restart Claude Code after installing.
+*(Install only the plugin(s) you want. No plugin declares dependencies; `superpowers@claude-plugins-official` is optional and the skills fall back to plain instructions without it.)* Restart Claude Code after installing.
 
 #### Option B: Install from a local clone (all or a subset)
 
@@ -67,7 +67,7 @@ In Claude Code:
 git clone https://github.com/effluvialsplurf/ai-plugins.git ~/Projects/ai-plugins
 cd ~/Projects/ai-plugins
 
-./install.sh --claude                           # Register local marketplace + install all 3 Claude plugins + statusLine
+./install.sh --claude                           # Register local marketplace + install every Claude plugin
 ./install.sh --claude --only deep-review        # Install a single plugin
 ./install.sh --claude --only deep-review,build-loop
 ```
@@ -75,13 +75,12 @@ cd ~/Projects/ai-plugins
 To test a single plugin live without installing it into your marketplace:
 
 ```bash
-claude --plugin-dir claude/deep-review
-claude --plugin-dir claude/build-loop
-claude --plugin-dir claude/egm-runbook
+claude --plugin-dir plugins/deep-review
+claude --plugin-dir plugins/build-loop
+claude --plugin-dir plugins/lean-runbook
 ```
 
-> **Want Antigravity's `lean-design` + `lean-runbook` natively in Claude Code?** Use **Prompt 3** in
-> [`docs/CONVERSION-PROMPTS.md`](./docs/CONVERSION-PROMPTS.md#prompt-3-convert-antigravity-lean-runbook--lean-design-for-anthropic-claude--claude-code).
+> `lean-design` + `lean-runbook` run natively in Claude Code from this repo (`/plugin install lean-runbook@ai-plugins`); `./install.sh --bin-dir` puts the CLI shims on `PATH`.
 
 ---
 
@@ -91,7 +90,7 @@ claude --plugin-dir claude/egm-runbook
 git clone https://github.com/effluvialsplurf/ai-plugins.git ~/Projects/ai-plugins
 cd ~/Projects/ai-plugins
 
-./install.sh --antigravity                      # Symlink antigravity/* into ~/.gemini/config/plugins/ (live edits)
+./install.sh --antigravity                      # Symlink plugins/* that have a root plugin.json into ~/.gemini/config/plugins/ (swarmctl is skipped)
 ./install.sh --antigravity --copy               # Standalone copy instead of symlinks
 ```
 
@@ -139,23 +138,23 @@ cd ~/Projects/ai-plugins
 ./install.sh --codex --only deep-review                     # deep-review + receiving-deep-review
 ./install.sh --gemini-cli --only lean-design                # lean-design (3-doc suite + design_check.py)
 ./install.sh --agents --only deep-review,lean-design,context-costs
-./install.sh --skills ~/.agents/skills --only egm-runbook   # explicitly include egm-runbook skill
+./install.sh --bin-dir ~/.local/bin                         # PATH shims: lean-runbook, lean-design, swarmctl
 ```
 
 #### Manual Install (No `install.sh` Needed)
 
 Every skill is a standard directory containing `SKILL.md`. Copy or symlink any skill folder directly into your harness's skills directory:
 
-- `claude/deep-review/skills/deep-review` & `claude/deep-review/skills/receiving-deep-review`
-- `claude/build-loop/skills/build-loop` & `claude/build-loop/skills/context-costs` *(keep `claude/build-loop/{templates,scripts}` handy in your clone)*
-- `antigravity/lean-runbook/skills/lean-design` *(self-contained with `scripts/design_check.py` and `templates/`)*
-- `antigravity/lean-runbook/skills/lean-runbook` *(self-contained with `scripts/runbook.py` CLI and `templates/`)*
+- `plugins/deep-review/skills/deep-review` & `plugins/deep-review/skills/receiving-deep-review`
+- `plugins/build-loop/skills/build-loop` & `plugins/build-loop/skills/context-costs` *(keep `plugins/build-loop/{templates,scripts}` handy in your clone)*
+- `plugins/lean-runbook/skills/lean-design` *(self-contained with `scripts/design_check.py` and `templates/`)*
+- `plugins/lean-runbook/skills/lean-runbook` *(self-contained with `scripts/runbook.py` CLI and `templates/`)*
 
 ---
 
 ### 4. Converting Non-Agnostic Plugins to Your Model Family / Harness
 
-If you want full native orchestration, hooks, model seat routing, or IDE rule files for **`lean-runbook`**, **`build-loop`**, or **`egm-runbook`** on a different harness or model family:
+If you want full native orchestration, hooks, model seat routing, or IDE rule files for **`lean-runbook`** or **`build-loop`** on a different harness or model family:
 
 1. Check [`docs/PORTABILITY.md`](./docs/PORTABILITY.md) to see which components need conversion and pick your model seats.
 2. Open [`docs/CONVERSION-PROMPTS.md`](./docs/CONVERSION-PROMPTS.md) and copy the ready-made prompt for your target family/harness:
@@ -187,7 +186,7 @@ If you want full native orchestration, hooks, model seat routing, or IDE rule fi
 - **Claude Code:**
   - Test a single plugin live without reinstalling:
     ```bash
-    claude --plugin-dir claude/egm-runbook
+    claude --plugin-dir plugins/lean-runbook
     ```
   - Validate the marketplace and plugin manifests:
     ```bash
@@ -201,13 +200,14 @@ If you want full native orchestration, hooks, model seat routing, or IDE rule fi
 ### Running Tests
 
 ```bash
-python3 -m unittest discover -s claude/egm-runbook/scripts/tests -v
-python3 -m unittest discover -s antigravity/lean-runbook/skills/lean-runbook/scripts -v
-python3 -m unittest discover -s antigravity/lean-runbook/skills/lean-design/scripts -v
+tools/gate.sh            # full gate: layout/manifests, agnostic grep, every suite (>=86 tests), installer sandbox tests
+tools/gate.sh --fast     # same, but skips the installer sandbox tests
 ```
+
+One `gate: PASS (N tests)` line means success; otherwise the failing section's tail is printed and the exit code is non-zero.
 
 ### Adding a New Plugin
 
-- **Claude Code:** Add the plugin folder under `claude/<name>/` (with `.claude-plugin/plugin.json`), register it in `.claude-plugin/marketplace.json`, and validate with `claude plugin validate .`.
-- **Antigravity:** Add the plugin folder under `antigravity/<name>/` (with `plugin.json`) and re-run `./install.sh --antigravity`.
-- **Portability:** Add an entry for the new plugin in `docs/PORTABILITY.md` and `SKILL_CATALOG` in `install.sh` so non-native harnesses can install its portable skills cleanly.
+- Add the plugin folder under `plugins/<name>/` with `.claude-plugin/plugin.json` (Claude Code), plus a root `plugin.json` only if it should be an Antigravity plugin, and register it in `.claude-plugin/marketplace.json` with source `./plugins/<name>`. `install.sh` and the gate derive everything from there (no plugin lists to edit).
+- Keep skills, agents, templates and rules free of model IDs, `~/.gemini` and `${CLAUDE_PLUGIN_ROOT}` outside `references/harness-*.md` / `references/version-*.md`; agents use `model: inherit`; manifests declare no `dependencies`. `tools/check_agnostic.py` enforces this.
+- Add an entry for the plugin to `docs/PORTABILITY.md`, then run `claude plugin validate .` and `tools/gate.sh`.

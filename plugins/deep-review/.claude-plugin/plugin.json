@@ -5,8 +5,5 @@
   "author": {
     "name": "effluvialsplurf"
   },
-  "repository": "https://github.com/effluvialsplurf/ai-plugins",
-  "dependencies": [
-    "superpowers@claude-plugins-official"
-  ]
+  "repository": "https://github.com/effluvialsplurf/ai-plugins"
 }

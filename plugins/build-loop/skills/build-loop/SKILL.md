@@ -46,7 +46,7 @@ before the first build; it applies to any work with subagents, not only this loo
 
 ## Each piece of work
 
-Make `.loop/<slug>/` with `LOOP-STATE.md` and `FINDINGS.md` from `${CLAUDE_PLUGIN_ROOT}/templates/`. A resumed or
+Make `.loop/<slug>/` with `LOOP-STATE.md` and `FINDINGS.md` from the plugin's `templates/` folder (two levels above this skill's folder). A resumed or
 compacted session **reads LOOP-STATE.md first**, before anything in the conversation. Put that rule in the project's
 CLAUDE.md too; it is re-read after a compaction.
 
@@ -122,8 +122,7 @@ code before it is built.
 | `scripts/codex-review.sh`, `scripts/codex-usage.sh` | Codex seats (Claude + Codex version) |
 | `scripts/loop_ledger.py`, `scripts/context_breakdown.py` | Cost by stage after every PR (see `build-loop:context-costs`) |
 
-Script arguments are in each script's header comment. Run them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>` (outside Claude
-Code, replace `${CLAUDE_PLUGIN_ROOT}` with your local checkout path to `claude/build-loop`, and see
+Script arguments are in each script's header comment. Run them from the plugin's `scripts/` folder (two levels above this skill's folder; see
 `references/version-custom-harness.md` for harness/model substitutions). Scripts that
 keep state default to `.loop/` at the main checkout's root (shared by every worktree); set `LOOP_DIR` to move it.
 `codex-review.sh` takes the rubric as a file: pass the `deep-review` plugin's `references/correctness.md`.

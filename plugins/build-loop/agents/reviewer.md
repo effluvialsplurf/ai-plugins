@@ -1,7 +1,7 @@
 ---
 name: reviewer
-description: Build-loop reviewer - plan checks against the real code, task reviews, whole-branch reviews, re-reviews after a fix. Read-only except its report file. Opus at high effort.
-model: claude-opus-5-5
+description: Build-loop reviewer - plan checks against the real code, task reviews, whole-branch reviews, re-reviews after a fix. Read-only except its report file. High effort, inherited model.
+model: inherit
 effort: high
 tools: Bash, Read, Write, Grep, Glob, WebFetch, WebSearch
 ---

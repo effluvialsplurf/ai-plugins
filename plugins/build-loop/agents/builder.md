@@ -1,7 +1,7 @@
 ---
 name: builder
-description: Build-loop implementer for work the plan fully specifies - one build task, a fix round from a handoff, a doc or skill update. Sonnet at high effort.
-model: claude-sonnet-5-5
+description: Build-loop implementer for work the plan fully specifies - one build task, a fix round from a handoff, a doc or skill update. High effort, inherited model.
+model: inherit
 effort: high
 tools: Bash, Read, Edit, Write, Grep, Glob, WebFetch, WebSearch
 ---

@@ -1,7 +1,7 @@
 ---
 name: planner
-description: Build-loop planner for judgment work that writes files - design traces, full-code plans and plan task files, plan fixes after a plan check, live checks. Opus at high effort.
-model: claude-opus-5-5
+description: Build-loop planner for judgment work that writes files - design traces, full-code plans and plan task files, plan fixes after a plan check, live checks. High effort, inherited model.
+model: inherit
 effort: high
 tools: Bash, Read, Edit, Write, Grep, Glob, WebFetch, WebSearch
 ---

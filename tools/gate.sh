@@ -38,6 +38,8 @@ print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
 )" || fail "layout/manifests" "$out"
 
+out="$(python3 tools/check_agnostic.py 2>&1)" || fail "agnostic" "$out"
+
 total=0
 for suite in plugins/swarmctl/scripts/tests plugins/lean-runbook/skills/lean-runbook/scripts \
              plugins/lean-runbook/skills/lean-design/scripts tools; do

@@ -57,8 +57,8 @@ reasoning carried forward across turns. So **fewer calls and fresh contexts pay 
    before it reads anything, and pays for that on every call. List only the tools the seat needs (e.g.
    `tools: Bash, Read, Edit, Write, Grep, Glob` for a builder). Most of the overhead comes from unused built-in tool
    definitions and skill lists. Agent definitions load when a session starts, so restart after changing one.
-5. **Pin the model by full id** (`claude-sonnet-5-5`, not `sonnet`) so an alias cannot quietly resolve to an older
-   model.
+5. **Pin the model by its full id** where your harness lets you set one (not an alias) so an alias cannot quietly
+   resolve to an older model.
 6. **Batch.** All of a step's reads in one message, all of its edits in one message. Each round trip is another
    full-context re-read.
 7. **Scripts for anything mechanical.** Build, restart, test gate, PR chores: one script that prints one line on
@@ -80,9 +80,9 @@ reasoning carried forward across turns. So **fewer calls and fresh contexts pay 
 
 Two scripts in this plugin read Claude Code's own session transcripts (under `~/.claude/projects/`):
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/loop_ledger.py`: cost by job group (jobs, calls per job, context at first and last
+- `scripts/loop_ledger.py` (in this plugin): cost by job group (jobs, calls per job, context at first and last
   call, cache writes after long waits).
-- `${CLAUDE_PLUGIN_ROOT}/scripts/context_breakdown.py`: what one job's context is made of.
+- `scripts/context_breakdown.py` (in this plugin): what one job's context is made of.
 
 Arguments are in each script's header. The scale they print is weighted tokens (fresh + 1.25 x cache write + 0.1 x
 cache read + 5 x output); read it as relative cost, not dollars. Run them before and after a change. Change one thing

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 GATE = Path(__file__).resolve().parent / "gate.sh"
+CHECK = GATE.parent / "check_agnostic.py"
 SUITES = (
     "plugins/swarmctl/scripts/tests",
     "plugins/lean-runbook/skills/lean-runbook/scripts",
@@ -26,6 +27,7 @@ class GateFixture(unittest.TestCase):
             (self.root / s).mkdir(parents=True)
             (self.root / s / "test_x.py").write_text(PASSING)
         shutil.copy(GATE, self.root / "tools/gate.sh")  # unpatched; gate() patches the floor per run
+        shutil.copy(CHECK, self.root / "tools/check_agnostic.py")
         (self.root / "plugins/demo/.claude-plugin").mkdir(parents=True)
         (self.root / "plugins/demo/.claude-plugin/plugin.json").write_text('{"name": "demo"}')
         (self.root / ".claude-plugin").mkdir()
@@ -89,6 +91,20 @@ class TestGate(GateFixture):
         r = self.gate("--fast")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("ghost", r.stdout)
+
+    def test_fails_when_skill_text_names_a_model_id(self):  # EDGE-6 through the gate
+        skill = self.root / "plugins/demo/skills/s/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("pin claude-opus-5-5\n")
+        r = self.gate("--fast")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("plugins/demo/skills/s/SKILL.md", r.stdout)
+
+    def test_fails_when_manifest_declares_dependencies(self):  # EDGE-7 through the gate
+        (self.root / "plugins/demo/.claude-plugin/plugin.json").write_text('{"name": "demo", "dependencies": ["x"]}')
+        r = self.gate("--fast")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("dependencies", r.stdout)
 
     def test_environment_cannot_lower_the_86_floor(self):
         r = self.gate("--fast", min_tests=None, env={"GATE_MIN_TESTS": "0"})
