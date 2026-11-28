@@ -67,10 +67,14 @@ class TestInstallRegistry(Sandbox):
     def test_shims_resolve_their_script_through_the_symlink(self):
         bindir = self.tmp / "bin"
         self.assertEqual(self.install("--bin-dir", str(bindir)).returncode, 0)
-        for shim, marker in (("lean-runbook", "lean-runbook"), ("lean-design", "lean-design")):
-            r = subprocess.run([str(bindir / shim)], env=self.env, cwd=self.tmp, capture_output=True, text=True, timeout=30)
+        for shim in ("lean-runbook", "lean-design"):
+            run = lambda *a: subprocess.run([str(bindir / shim), *a], env=self.env, cwd=self.tmp, capture_output=True, text=True, timeout=30)
+            r = run()
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertIn(marker, r.stdout)
+            self.assertTrue(r.stdout.startswith(f"{shim}:"), r.stdout[:80])  # each script's own banner
+            r = run("bogus")
+            self.assertEqual(r.returncode, 2, r.stdout)
+            self.assertIn("Unknown subcommand", r.stderr)
 
     def test_skills_target_links_every_skill_of_every_registry_plugin(self):
         dest = self.tmp / "skills"
@@ -135,7 +139,9 @@ class TestInstallFixes(Sandbox):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(old.resolve(), (registry()["lean-runbook"] / "skills/lean-runbook").resolve())
         self.assertFalse((registry()["lean-runbook"] / "skills/lean-runbook/lean-runbook").exists())
-        found = sorted(p.read_text() for p in (self.home / ".cache/ai-plugins-backups").rglob("*") if p.is_file())
+        backups = self.home / ".cache/ai-plugins-backups"
+        self.assertEqual(len(self.names(backups)), 2)
+        found = sorted(p.read_text() for p in backups.rglob("*") if p.is_file())
         self.assertEqual(found, ["old shim", "old skill"])
 
     def test_failed_backup_exits_nonzero_and_leaves_existing_dir(self):

@@ -203,10 +203,10 @@ fi
 
 # Move dst into its own unique backup dir; fails if any step fails.
 backup_existing() {
-  local dst="$1" name="$2" root="${HOME}/.cache/ai-plugins-backups" dir
-  mkdir -p "${root}" && dir="$(mktemp -d "${root}/${name}.bak.XXXXXX")" && mv "${dst}" "${dir}/" \
+  local dst="$1" name="$2" root="${HOME}/.cache/ai-plugins-backups" backup
+  mkdir -p "${root}" && backup="$(mktemp -u "${root}/${name}.bak.XXXXXX")" && mv "${dst}" "${backup}" \
     || { echo "cannot back up ${dst}" >&2; return 1; }
-  echo "backed up existing ${dst} -> ${dir}/$(basename "${dst}")"
+  echo "backed up existing ${dst} -> ${backup}"
 }
 
 link_or_copy_dir() {
