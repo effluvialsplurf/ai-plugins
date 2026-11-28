@@ -18,8 +18,9 @@ class LeanRunbookTests(unittest.TestCase):
         self.data = Path(self.tmp.name) / "data"
         self.repo.mkdir()
         self.data.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        self.env = {**os.environ, "LEAN_RUNBOOK_DATA": str(self.data)}
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        self.env["LEAN_RUNBOOK_DATA"] = str(self.data)
+        subprocess.run(["git", "init", "-q", str(self.repo)], env=self.env, check=True)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -140,13 +141,14 @@ class LeanRunbookTests(unittest.TestCase):
     def test_epic_parallel_worktrees_have_isolated_gates_and_aggregate_status(self) -> None:
         # Need an initial commit before adding git worktrees
         (self.repo / "README.md").write_text("init\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(self.repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "README.md"], env=self.env, check=True)
         subprocess.run(
             [
                 "git", "-C", str(self.repo),
                 "-c", "user.name=Test", "-c", "user.email=test@example.com",
                 "commit", "-q", "-m", "init",
             ],
+            env=self.env,
             check=True,
         )
 
@@ -154,10 +156,12 @@ class LeanRunbookTests(unittest.TestCase):
         wt_b = Path(self.tmp.name) / "wt-stage-hud"
         subprocess.run(
             ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "slice/stage-schema", str(wt_a)],
+            env=self.env,
             check=True,
         )
         subprocess.run(
             ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "slice/stage-hud", str(wt_b)],
+            env=self.env,
             check=True,
         )
 

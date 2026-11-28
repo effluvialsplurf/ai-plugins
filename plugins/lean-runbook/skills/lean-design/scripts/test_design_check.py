@@ -122,7 +122,7 @@ class LeanDesignCheckTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.data = self.root / "data"
-        self.env = os.environ.copy()
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         self.env["LEAN_DESIGN_DATA"] = str(self.data)
 
     def tearDown(self) -> None:

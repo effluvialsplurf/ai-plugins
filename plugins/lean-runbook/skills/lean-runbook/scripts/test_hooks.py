@@ -27,9 +27,9 @@ class Base(unittest.TestCase):
         self.repo, self.data, home = self.tmp / "repo", self.tmp / "data", self.tmp / "home"
         for d in (self.repo, self.data, home):
             d.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         self.env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "PLUGIN_DATA") and not k.startswith("GIT_")}
         self.env.update(LEAN_RUNBOOK_DATA=str(self.data), HOME=str(home))
+        subprocess.run(["git", "init", "-q", str(self.repo)], env=self.env, check=True)
         self.rb("--cwd", str(self.repo), "start", "feat")
 
     def rb(self, *args, stdin=None, cwd=None):
@@ -116,13 +116,97 @@ class TestHooks(Base):
         for text in (ctx["additionalContext"], steps[0]["systemMessage"]["systemMessage"]):
             for needle in ("feat", str(RUNBOOK), str(DESIGN)):
                 self.assertIn(needle, text)
+        # Cold start (no active feature): Claude still gets script-path fallback (ADR-5); Antigravity stays quiet
+        self.rb("--cwd", str(self.repo), "finish")
+        cold_claude = self.hook("session-start", {"cwd": str(self.repo)}, "--harness", "claude")["hookSpecificOutput"]
+        self.assertIn(str(RUNBOOK), cold_claude["additionalContext"])
+        self.assertIn(str(DESIGN), cold_claude["additionalContext"])
+        self.assertEqual(self.hook("session-start", {"cwd": str(self.repo)}, "--harness", "antigravity"), {})
+
+    def test_antigravity_native_edit_file_and_append_enforce_line_budget(self):
+        spec = self.repo / "docs/specs/feat.md"
+        spec.parent.mkdir(parents=True)
+        spec.write_text("line\n" * 309)
+        # Native AGY 2.0 edit_file replaces EVERY occurrence of Target (309 -> 618 lines)
+        out_edit = self.hook("pre-tool-use", {
+            "cwd": str(self.repo),
+            "toolCall": {"name": "edit_file", "args": {"Path": str(spec), "Target": "line", "Replacement": "a\nb"}},
+        })
+        self.assertEqual(out_edit["decision"], "force_ask", out_edit)
+        # Native AGY 2.0 write_file with Append=True (309 + 50 = 359 lines)
+        out_append = self.hook("pre-tool-use", {
+            "cwd": str(self.repo),
+            "toolCall": {"name": "write_file", "args": {"Path": str(spec), "Content": "extra\n" * 50, "Append": True}},
+        })
+        self.assertEqual(out_append["decision"], "force_ask", out_append)
+
+    def test_symlink_cross_repo_evasion_and_cli_edge_cases(self):
+        # Symlink inside docs/ pointing to repo code must be denied; nested src/docs/foo.py must be denied
+        (self.repo / "app.py").write_text("x = 1\n")
+        (self.repo / "docs").mkdir(exist_ok=True)
+        alias = self.repo / "docs/alias.md"
+        alias.symlink_to("../app.py")
+        nested = self.repo / "src/docs/foo.py"
+        nested.parent.mkdir(parents=True, exist_ok=True)
+        self.check([("write", str(alias), "y", "deny"), ("write", str(nested), "y", "deny")])
+        # Cross-repo write and --cwd override from an inactive repo must still gate active repo
+        other = self.tmp / "other"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", str(other)], env=self.env, check=True)
+        out_write = self.hook("pre-tool-use", {"tool_name": "Write", "tool_input": {"file_path": str(self.repo / "app.py"), "content": "x"}, "cwd": str(other)})
+        self.assertEqual(out_write["hookSpecificOutput"]["permissionDecision"], "deny", out_write)
+        out_cmd = self.hook("pre-tool-use", {"tool_name": "Bash", "tool_input": {"command": f"lean-runbook --cwd {self.repo} done goldfish"}, "cwd": str(other)})
+        self.assertEqual(out_cmd["hookSpecificOutput"]["permissionDecision"], "ask", out_cmd)
+        # State-dir tamper evasions & python3 -m runbook
+        self.check([
+            *cmds("deny", "rm -rf ~/.cache//lean-runbook", "rm -rf ~/.cache/x/../lean-runbook",
+                  "rm -rf ~/.cache/lean-runboo?", "cd ~/.cache && rm -rf lean-runbook"),
+            *cmds("ask", "python3 -m runbook done goldfish"),
+        ])
+        # --harness=claude equals syntax & --cwd without subcommand
+        agy = self.payloads("write", f"{self.repo}/a.py", "x")["antigravity"]
+        self.assertEqual(self.hook("pre-tool-use", agy, "--harness=claude"), {})
+        r_no_cmd = self.rb("--cwd", str(self.repo))
+        self.assertEqual(r_no_cmd.returncode, 0, r_no_cmd.stderr)
+
+    def test_hook_manifests_execute_and_match_contract(self):
+        plugin_root = HERE.parents[2]
+        # Antigravity hooks.json runs with cwd = plugin_root
+        agy_cfg = json.loads((plugin_root / "hooks.json").read_text())
+        gate = agy_cfg["lean-runbook-gate"]
+        ss_cmd = gate["SessionStart"][0]["command"]
+        self.assertIn("--harness antigravity", ss_cmd)
+        self.assertNotIn("hook-", ss_cmd)
+        r_ss = subprocess.run(["sh", "-c", ss_cmd], cwd=str(plugin_root), input=json.dumps({"cwd": str(self.repo)}),
+                              env=self.env, text=True, capture_output=True, check=True)
+        self.assertIn("feat", json.loads(r_ss.stdout)["injectSteps"][0]["systemMessage"]["systemMessage"])
+        pre_cmd = gate["PreToolUse"][0]["hooks"][0]["command"]
+        self.assertIn("edit_file", gate["PreToolUse"][0]["matcher"])
+        r_pre = subprocess.run(["sh", "-c", pre_cmd], cwd=str(plugin_root),
+                               input=json.dumps(self.payloads("write", f"{self.repo}/app.py", "x")["antigravity"]),
+                               env=self.env, text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(r_pre.stdout)["decision"], "deny")
+        # Claude hooks/hooks.json expands ${CLAUDE_PLUGIN_ROOT}
+        cl_cfg = json.loads((plugin_root / "hooks/hooks.json").read_text())["hooks"]
+        cl_env = {**self.env, "CLAUDE_PLUGIN_ROOT": str(plugin_root)}
+        cl_ss = cl_cfg["SessionStart"][0]["hooks"][0]["command"]
+        self.assertIn("--harness claude", cl_ss)
+        r_cl_ss = subprocess.run(["sh", "-c", cl_ss], input=json.dumps({"cwd": str(self.repo)}),
+                                 env=cl_env, text=True, capture_output=True, check=True)
+        self.assertIn("feat", json.loads(r_cl_ss.stdout)["hookSpecificOutput"]["additionalContext"])
+        cl_pre = cl_cfg["PreToolUse"][0]["hooks"][0]["command"]
+        self.assertIn("Bash", cl_cfg["PreToolUse"][0]["matcher"])
+        r_cl_pre = subprocess.run(["sh", "-c", cl_pre],
+                                  input=json.dumps(self.payloads("write", f"{self.repo}/app.py", "x")["claude"]),
+                                  env=cl_env, text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(r_cl_pre.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
 class TestPreCommit(Base):
     def stage(self, name):
         (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
         (self.repo / name).write_text("x\n")
-        subprocess.run(["git", "-C", str(self.repo), "add", name], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", name], env=self.env, check=True)
 
     def pc(self, **kw):
         return self.rb("--cwd", str(self.repo), "pre-commit", **kw)
@@ -133,6 +217,12 @@ class TestPreCommit(Base):
         self.stage("app.py")
         r = self.pc()
         self.assertEqual((r.returncode, "app.py" in r.stderr), (1, True))
+        # Worktree symlink swap must NOT bypass staged app.py gate
+        (self.repo / "app.py").unlink()
+        (self.repo / "app.py").symlink_to("docs/specs/feat.md")
+        self.assertEqual(self.pc().returncode, 1)
+        (self.repo / "app.py").unlink()
+        (self.repo / "app.py").write_text("x\n")
         self.rb("--cwd", str(self.repo), "done", "goldfish")
         self.assertEqual(self.pc().returncode, 0)
         (self.tmp / "plain").mkdir()
@@ -149,6 +239,11 @@ class TestPreCommit(Base):
             target.chmod(mode)
             self.assertEqual(rc, 1, target)
         self.env["LEAN_RUNBOOK_DATA"] = str(self.tmp / "no-state")
+        self.assertEqual(self.pc().returncode, 0)
+        # Non-UTF-8 staged filename must not crash pre-commit when repo is inactive
+        bad_name = os.fsdecode(b"caf\xe9.txt")
+        (self.repo / bad_name).write_text("hi\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", bad_name], env=self.env, check=True)
         self.assertEqual(self.pc().returncode, 0)
 
 

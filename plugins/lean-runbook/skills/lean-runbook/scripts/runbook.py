@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shlex
 import subprocess
@@ -404,16 +405,22 @@ def is_under(path: Path, parent: Path) -> bool:
         return False
 
 
-def is_code_file(path: Path, repo: Path) -> bool:
-    if not is_under(path, repo):
+def is_code_rel_path(rel: Path) -> bool:
+    """Lexical check for repo-relative path (does not follow worktree symlinks)."""
+    parts = rel.parts
+    if not parts or parts[0] in {"docs", ".loop", ".agents", ".agent"}:
         return False
-    rel = path.resolve().relative_to(repo.resolve())
-    parts = set(rel.parts)
-    if parts & {"docs", ".loop", ".agents", ".agent"}:
-        return False
-    if path.name in CODE_BASENAMES:
+    if rel.name in CODE_BASENAMES:
         return True
-    return path.suffix.lower() in CODE_EXTENSIONS
+    return rel.suffix.lower() in CODE_EXTENSIONS
+
+
+def is_code_file(path: Path, repo: Path) -> bool:
+    resolved = path.resolve()
+    if not is_under(resolved, repo):
+        return False
+    rel = resolved.relative_to(repo.resolve())
+    return is_code_rel_path(rel)
 
 
 def is_budgeted_doc(path: Path, repo: Path) -> tuple[bool, str]:
@@ -448,7 +455,10 @@ def decide_write(state: dict[str, Any], path: Any, content: Any, is_edit: bool) 
     if is_edit:  # simulate the edits in order; an unreadable file raises and the hook fails open
         text = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
         for old, new, every in content:
-            text = text.replace(old, new, -1 if every else 1) if old else text or new
+            if old is None:  # append mode (Antigravity write_file Append=True)
+                text = text + str(new)
+            else:
+                text = text.replace(old, new, -1 if every else 1) if old else text or new
         count = len(text.splitlines())
     else:
         count = len(str(content).splitlines())
@@ -458,9 +468,48 @@ def decide_write(state: dict[str, Any], path: Any, content: Any, is_edit: bool) 
 
 
 STATE_DIR = ".cache/lean-runbook"
-CLI_RE = re.compile(r"runbook\.py|(?<![\w.-])lean-runbook(?![\w./-])")  # may follow "/": shim invoked by path
+STATE_GLOB_RE = re.compile(r"\.cache/[^\s;|&]*lean-runboo[k*?\[\]]")
+STATE_CD_RE = re.compile(r"\bcd\b[^\n;|&]*\.cache\b[^\n]*\blean-runboo[k*?\[\]]")
+CLI_RE = re.compile(r"runbook\.py|(?<![\w.-])lean-runbook(?![\w./-])|\bpython3?\s+-m\s+runbook\b")  # may follow "/": shim invoked by path
 OVERRIDE_RE = re.compile(r"\b(skip\b.*\bgate|done\b.*\b(goldfish|0*2(?![>\w]))|start\b.*--force)\b", re.I | re.S)
 EVASION_RE = re.compile(r"[\"'\\{}]")  # defeats quote/brace evasion such as lean-"runbook"
+
+
+def _normalize_cmd_paths(plain: str) -> str:
+    """Collapse //, /./, and seg/.. in path-like tokens so path tricks cannot evade state-dir checks."""
+    def norm_tok(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        return posixpath.normpath(tok) if "/" in tok else tok
+    return re.sub(r"[^\s;|&()<>#]+", norm_tok, plain)
+
+
+def _extract_cmd_cwd(cmd: str) -> str | None:
+    try:
+        words = shlex.split(cmd)
+    except ValueError:
+        return None
+    for idx, tok in enumerate(words):
+        if tok == "--cwd" and idx + 1 < len(words):
+            return words[idx + 1]
+        if tok.startswith("--cwd="):
+            return tok.split("=", 1)[1]
+    return None
+
+
+def _state_for_path(target_path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the git repo owning target_path so cross-repo writes respect that repo's gate."""
+    anc = target_path if target_path.is_dir() else target_path.parent
+    while not anc.exists() and anc.parent != anc:
+        anc = anc.parent
+    if not anc.exists():
+        return fallback
+    target_repo = repo_root_for(str(anc))
+    if str(target_repo) == str(fallback.get("repo", "")):
+        return fallback
+    st = load_state(target_repo)
+    if isinstance(st, dict) and st.get("active"):
+        return st
+    return fallback
 
 
 def is_cli_call(cmd: str) -> bool:
@@ -475,24 +524,41 @@ def is_cli_call(cmd: str) -> bool:
         words.pop(0)  # leading env assignments
     if words and re.fullmatch(r"(.*/)?(python3?|sh|bash)", words[0]):
         words.pop(0)
+        if len(words) >= 2 and words[0] == "-m" and words[1] == "runbook":
+            return True
     return bool(words and re.fullmatch(r"(.*/)?(lean-runbook|runbook\.py)", words[0]))
 
 
 def decide_cmd(state: dict[str, Any], cmd: str) -> Decision:
     plain = EVASION_RE.sub("", cmd.replace("\\\n", ""))  # join line continuations, as the shell does
-    if any(m in plain for m in (str(data_root()), STATE_DIR, "$LEAN_RUNBOOK_DATA")) and not is_cli_call(cmd):
+    normed = _normalize_cmd_paths(plain)
+    dr = str(data_root())
+    hits_state = (
+        any(m in plain or m in normed for m in (dr, STATE_DIR, "$LEAN_RUNBOOK_DATA"))
+        or bool(STATE_GLOB_RE.search(normed) or STATE_CD_RE.search(normed))
+    )
+    if hits_state and not is_cli_call(cmd):
         return Decision("deny", "Direct access to the lean-runbook state directory is blocked. Use the lean-runbook CLI.")
-    if state.get("active") and CLI_RE.search(plain):
-        if OVERRIDE_RE.search(plain) or (gate_is_closed(state) and re.search(r"\bfinish\b", plain)):
-            return Decision("ask", f"lean-runbook: opening, bypassing, resetting or abandoning the spec gate for '{state['slug']}' needs explicit user approval.")
+    if CLI_RE.search(plain):
+        active_state = state if state.get("active") else None
+        cmd_cwd = _extract_cmd_cwd(cmd)
+        if cmd_cwd:
+            target_st = load_state(repo_root_for(cmd_cwd))
+            if isinstance(target_st, dict) and target_st.get("active"):
+                active_state = target_st
+        if active_state and (OVERRIDE_RE.search(plain) or (gate_is_closed(active_state) and re.search(r"\bfinish\b", plain))):
+            return Decision("ask", f"lean-runbook: opening, bypassing, resetting or abandoning the spec gate for '{active_state['slug']}' needs explicit user approval.")
     return ALLOW
 
 
 def format_session_start(state: dict[str, Any], script_paths: dict[str, str]) -> str:
+    scripts = " ".join(f"{k}={v}" for k, v in script_paths.items())
+    if not state.get("active"):
+        return f"lean-runbook scripts (fallback if shims not on PATH): {scripts}"
     idx, st = current_stage(state)
     epic_tag = f" [epic: {state['epic']}]" if state.get("epic") else ""
     return (f"lean-runbook active: {state['slug']}{epic_tag} | Stage {idx}/{len(STAGES)} ({st}) | Gate: {'CLOSED' if gate_is_closed(state) else 'OPEN'} "
-            f"| Next: {next_guidance(state)} | Scripts: {' '.join(f'{k}={v}' for k, v in script_paths.items())}")
+            f"| Next: {next_guidance(state)} | Scripts: {scripts}")
 
 
 def tool_action(harness: str, payload: dict[str, Any]) -> tuple[str, Any, Any, bool]:
@@ -509,9 +575,15 @@ def tool_action(harness: str, payload: dict[str, Any]) -> tuple[str, Any, Any, b
     if tc.get("name") == "run_command":
         return "cmd", str(a.get("CommandLine") or a.get("command") or ""), None, False
     path = a.get("Path") or a.get("TargetFile") or a.get("path") or a.get("file_path") or ""
+    if "Target" in a or "Replacement" in a:
+        # Antigravity 2.0 edit_file replaces EVERY occurrence of Target in the file
+        return "write", path, [(a.get("Target", ""), a.get("Replacement", ""), True)], True
     if "TargetContent" in a or "ReplacementChunks" in a:
         return "write", path, [(c.get("TargetContent", ""), c.get("ReplacementContent", ""), c.get("AllowMultiple")) for c in a.get("ReplacementChunks") or [a]], True
-    return "write", path, a.get("Content") or a.get("CodeContent"), False
+    body = a.get("Content") or a.get("CodeContent")
+    if a.get("Append") and body is not None:
+        return "write", path, [(None, str(body), False)], True
+    return "write", path, body, False
 
 
 def hook_main(event: str, harness: str) -> int:
@@ -523,7 +595,7 @@ def hook_main(event: str, harness: str) -> int:
         state = load_state(repo)
         if not isinstance(state, dict) or not state.get("active"):
             state = {"active": False, "repo": str(repo)}  # inactive: only the state-dir protection applies
-        if harness == "unknown" or (event == "session-start" and not state["active"]):
+        if harness == "unknown" or (event == "session-start" and not state["active"] and harness != "claude"):
             print(json.dumps({"decision": "allow"} if harness == "antigravity" and event == "pre-tool-use" else {}))
         elif event == "session-start":
             here = Path(__file__).resolve()
@@ -532,7 +604,14 @@ def hook_main(event: str, harness: str) -> int:
                              else {"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}))
         else:
             kind, target, content, is_edit = tool_action(harness, payload)
-            d = decide_cmd(state, target) if kind == "cmd" else decide_write(state, target, content, is_edit) if target else ALLOW
+            if kind == "cmd":
+                d = decide_cmd(state, target)
+            elif target:
+                tpath = Path(state["repo"]) / target
+                eff_state = _state_for_path(tpath, state)
+                d = decide_write(eff_state, target, content, is_edit)
+            else:
+                d = ALLOW
             print(json.dumps(({} if d.kind == "allow" else {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": d.kind, "permissionDecisionReason": d.reason}})
                              if harness == "claude" else {"decision": "force_ask" if d.kind == "ask" else d.kind, **({"reason": d.reason} if d.reason else {})}))
     except Exception:
@@ -544,12 +623,15 @@ def cmd_pre_commit(cwd: str | None) -> int:
     """Fail closed: block when staged code meets a closed gate, or when staged files cannot be read."""
     try:
         repo = repo_root_for(cwd)
-        out = subprocess.check_output(["git", "-C", str(repo), "diff", "--cached", "--name-only", "-z"], stderr=subprocess.DEVNULL, text=True)
+        raw = subprocess.check_output(["git", "-C", str(repo), "diff", "--cached", "--name-only", "-z"], stderr=subprocess.DEVNULL)
         try:
             state = json.loads(state_path_for(repo).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return 0  # truly no state; anything else (corrupt, unreadable) falls through to block
-        code = [f for f in out.split("\0") if f and is_code_file(repo / f, repo)]
+        if not isinstance(state, dict):
+            raise ValueError("state must be a JSON object")
+        names = [b.decode("utf-8", errors="surrogateescape") for b in raw.split(b"\0") if b]
+        code = [f for f in names if is_code_rel_path(Path(f))]
         if not code or not state.get("active") or not gate_is_closed(state):
             return 0
         print(f"lean-runbook: Spec Gate is CLOSED for '{state['slug']}'; staged code files: {', '.join(code)}", file=sys.stderr)
@@ -577,6 +659,9 @@ def main(argv: list[str]) -> int:
             cleaned.append(argv[i])
             i += 1
 
+    if not cleaned:
+        print(__doc__)
+        return 0
     cmd = cleaned[0]
     rest = cleaned[1:]
     if cmd == "start":
@@ -592,7 +677,12 @@ def main(argv: list[str]) -> int:
     if cmd == "pre-commit":
         return cmd_pre_commit(cwd)
     if cmd == "hook" and rest and rest[0] in ("session-start", "pre-tool-use"):
-        flag = dict(zip(rest, rest[1:])).get("--harness")
+        flag = None
+        for idx, tok in enumerate(rest[1:], 1):
+            if tok == "--harness" and idx + 1 < len(rest):
+                flag = rest[idx + 1]
+            elif tok.startswith("--harness="):
+                flag = tok.split("=", 1)[1]
         return hook_main(rest[0], flag if flag in ("claude", "antigravity") else "auto")
     print(f"Unknown subcommand: {cmd}", file=sys.stderr)
     return 2

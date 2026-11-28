@@ -160,7 +160,7 @@ def next_guidance(state: dict[str, Any]) -> str:
     tier_flag = " --complex" if state.get("complex") else ""
     return {
         "brief": f"Run Stage 1 Elephant Interrogation and lock rulings in .loop/designs/{slug}/brief.md, then run `done brief {slug}`.",
-        "draft": f"Draft design.md, tech-plan.md, and spec.md in {out_dir}/ via native swarm drafter, verify with `check {out_dir}{tier_flag}`, then run `done draft {slug}`.",
+        "draft": f"Draft design.md, tech-plan.md, and spec.md in {out_dir}/ via a `planner` (see lean-design SKILL.md), verify with `check {out_dir}{tier_flag}`, then run `done draft {slug}`.",
         "review": f"Run Stage 3 3-lens cross-vendor Goldfish review (clarity + opposite-vendor architect + handoff), consolidate into .loop/designs/{slug}/goldfish-report.md, then run `done review {slug}`.",
         "resolve": f"Resolve blockers/tradeoffs with user, compress to budget, run `check {out_dir}{tier_flag} --strict`, set Status: Approved, then run `done resolve {slug}`.",
         "drift": f"Design approved and ready for lean-runbook ({out_dir}/spec.md). After build, optionally run Stage 5 Drift Report and `done drift {slug}`.",
