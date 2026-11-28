@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ai-plugins — Operator's Guide (Antigravity 2.0 &amp; Claude Code)</title>
+<style>
+  :root {
+    --bg: #0c0f14;
+    --bg-elev: #131822;
+    --bg-card: #161c27;
+    --bg-code: #0e131b;
+    --border: #252f42;
+    --border-soft: #1d2534;
+    --fg: #e7edf6;
+    --fg-muted: #97a4ba;
+    --fg-dim: #6f7c94;
+    --accent: #6aa6ff;
+    --accent-soft: rgba(106, 166, 255, 0.12);
+    --agy: #68b5ff;
+    --agy-bg: rgba(104, 181, 255, 0.11);
+    --agy-border: rgba(104, 181, 255, 0.35);
+    --claude: #f09a5c;
+    --claude-bg: rgba(240, 154, 92, 0.11);
+    --claude-border: rgba(240, 154, 92, 0.35);
+    --ok: #5bd69c;
+    --ok-bg: rgba(91, 214, 156, 0.11);
+    --warn: #f2c45a;
+    --warn-bg: rgba(242, 196, 90, 0.12);
+    --err: #f27474;
+    --err-bg: rgba(242, 116, 116, 0.11);
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  [data-theme="light"] {
+    --bg: #f6f8fb;
+    --bg-elev: #ffffff;
+    --bg-card: #ffffff;
+    --bg-code: #f0f3f8;
+    --border: #d8e0ec;
+    --border-soft: #e6ecf4;
+    --fg: #131a26;
+    --fg-muted: #4b5870;
+    --fg-dim: #6d7b93;
+    --accent: #1d63dc;
+    --accent-soft: rgba(29, 99, 220, 0.09);
+    --agy: #1565d8;
+    --agy-bg: rgba(21, 101, 216, 0.08);
+    --agy-border: rgba(21, 101, 216, 0.32);
+    --claude: #c2571a;
+    --claude-bg: rgba(194, 87, 26, 0.08);
+    --claude-border: rgba(194, 87, 26, 0.32);
+    --ok: #138553;
+    --ok-bg: rgba(19, 133, 83, 0.09);
+    --warn: #9a6700;
+    --warn-bg: rgba(154, 103, 0, 0.1);
+    --err: #c62828;
+    --err-bg: rgba(198, 40, 40, 0.09);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.62;
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.87em;
+    background: var(--bg-code);
+    border: 1px solid var(--border-soft);
+    border-radius: 5px;
+    padding: 0.12em 0.38em;
+  }
+  pre {
+    margin: 0.65rem 0 1rem;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    position: relative;
+  }
+  pre code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    display: block;
+    white-space: pre;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .copy-btn:hover { color: var(--fg); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
+
+  /* Sticky Top Bar */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.65rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 700;
+    font-size: 15.5px;
+    letter-spacing: -0.01em;
+  }
+  .brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--agy), var(--claude));
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+  .seg {
+    display: inline-flex;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    color: var(--fg-muted);
+    padding: 5px 11px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .seg button:hover { color: var(--fg); }
+  .seg button.active[data-env="both"] { background: var(--accent-soft); color: var(--accent); }
+  .seg button.active[data-env="antigravity"] { background: var(--agy-bg); color: var(--agy); }
+  .seg button.active[data-env="claude"] { background: var(--claude-bg); color: var(--claude); }
+  .theme-btn {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg-muted);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* Layout */
+  .shell {
+    max-width: 1260px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    gap: 2rem;
+    padding: 1.75rem 1.25rem 4rem;
+  }
+  .toc {
+    position: sticky;
+    top: 72px;
+    align-self: start;
+    max-height: calc(100vh - 90px);
+    overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+  .toc-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    font-weight: 700;
+    margin: 0 0 0.6rem 0.6rem;
+  }
+  .toc a {
+    display: block;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--fg-muted);
+    margin-bottom: 2px;
+    border-left: 2px solid transparent;
+  }
+  .toc a:hover { color: var(--fg); background: var(--bg-elev); text-decoration: none; }
+  .toc a.active { color: var(--accent); background: var(--accent-soft); border-left-color: var(--accent); font-weight: 600; }
+
+  main { min-width: 0; }
+  section { scroll-margin-top: 76px; margin-bottom: 2.8rem; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.6rem; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 1.38rem;
+    line-height: 1.3;
+    margin: 0 0 0.9rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.015em;
+  }
+  h3 { font-size: 1.05rem; margin: 1.15rem 0 0.5rem; }
+  p { margin: 0 0 0.75rem; color: var(--fg); }
+  .lead { font-size: 15.5px; color: var(--fg-muted); max-width: 78ch; margin-bottom: 1.15rem; }
+
+  /* Badges & Tags */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .badge.agy { color: var(--agy); background: var(--agy-bg); border-color: var(--agy-border); }
+  .badge.claude { color: var(--claude); background: var(--claude-bg); border-color: var(--claude-border); }
+  .badge.ok { color: var(--ok); background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .badge.warn { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .badge.err { color: var(--err); background: var(--err-bg); border-color: color-mix(in srgb, var(--err) 35%, transparent); }
+
+  /* Cards & Grids */
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.85rem; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.15rem;
+  }
+  .card.agy-card { border-top: 3px solid var(--agy); }
+  .card.claude-card { border-top: 3px solid var(--claude); }
+  .card h3 { margin-top: 0; }
+  .card ul, .card ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+  .card li { margin-bottom: 0.35rem; }
+  .muted { color: var(--fg-muted); font-size: 13.5px; }
+
+  /* Callouts */
+  .callout {
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    margin: 0.85rem 0;
+    border: 1px solid var(--border);
+    border-left-width: 4px;
+    font-size: 14px;
+  }
+  .callout.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); border-left-color: var(--warn); }
+  .callout.err { background: var(--err-bg); border-color: color-mix(in srgb, var(--err) 35%, transparent); border-left-color: var(--err); }
+  .callout.ok { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 35%, transparent); border-left-color: var(--ok); }
+  .callout strong { display: inline-block; margin-right: 4px; }
+
+  /* Tables */
+  .tbl-wrap { overflow-x: auto; margin: 0.75rem 0 1rem; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.8px; background: var(--bg-card); }
+  th, td { text-align: left; padding: 0.62rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { background: var(--bg-elev); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); font-weight: 700; }
+  tr:last-child td { border-bottom: 0; }
+
+  /* Interactive Recipe Picker */
+  .picker-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+  .picker-tabs button {
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    padding: 7px 13px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .picker-tabs button:hover { color: var(--fg); border-color: var(--accent); }
+  .picker-tabs button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .recipe-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.05rem 1.2rem;
+  }
+
+  /* Visual Pipeline */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.55rem;
+    margin: 0.9rem 0 1.1rem;
+  }
+  .stage {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.7rem 0.75rem;
+    font-size: 12.5px;
+    position: relative;
+  }
+  .stage .num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 3px;
+  }
+  .stage .title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+  .stage.gate-closed { border-color: color-mix(in srgb, var(--err) 50%, var(--border)); }
+  .stage.gate-open { border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); }
+
+  /* Environment Visibility Filtering */
+  body[data-env="antigravity"] .only-claude { display: none !important; }
+  body[data-env="claude"] .only-agy { display: none !important; }
+  body[data-env="antigravity"] .grid-2.env-split,
+  body[data-env="claude"] .grid-2.env-split { grid-template-columns: 1fr; }
+
+  /* Diagram container */
+  .diagram-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin: 0.9rem 0 1.1rem;
+    overflow-x: auto;
+  }
+  .diagram-box svg { display: block; width: 100%; height: auto; max-width: 920px; margin: 0 auto; }
+
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  @media (max-width: 960px) {
+    .shell { grid-template-columns: 1fr; }
+    .toc { display: none; }
+    .grid-2, .grid-4, .pipeline { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-env="both">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <span>ai-plugins</span>
+    <span class="muted" style="font-weight:500;">Operator's Guide</span>
+  </div>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="Filter environment">
+      <button type="button" class="active" data-env="both">Both Harnesses</button>
+      <button type="button" data-env="antigravity">Antigravity 2.0</button>
+      <button type="button" data-env="claude">Claude Code</button>
+    </div>
+    <button type="button" class="theme-btn" id="themeToggle" aria-label="Toggle color theme">Light / Dark</button>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="toc" aria-label="Table of contents">
+    <div class="toc-title">On This Page</div>
+    <a href="#overview">1. Overview &amp; Plugin Map</a>
+    <a href="#picker">2. Quick-Start Recipe Picker</a>
+    <a href="#install">3. Installation Done Right</a>
+    <a href="#architecture">4. Roles &amp; 4-Tier Dispatch</a>
+    <a href="#swarm">5. Swarm: Antigravity vs Claude</a>
+    <a href="#workflows">6. End-to-End Workflows</a>
+    <a href="#gates">7. Spec Gates, Hooks &amp; State</a>
+    <a href="#pitfalls">8. Do This, Not That</a>
+  </nav>
+
+  <main>
+    <!-- SECTION 1: OVERVIEW -->
+    <section id="overview">
+      <h1>Using <code>ai-plugins</code> the Right Way</h1>
+      <p class="lead">
+        A single, unified plugin suite under <code>plugins/&lt;name&gt;/</code> built to run natively in both
+        <span class="badge agy">Antigravity 2.0</span> and <span class="badge claude">Claude Code</span> with
+        model-agnostic core skills, isolated worktree swarms, and hook-enforced Spec Gates.
+      </p>
+
+      <div class="grid-4">
+        <div class="card">
+          <h3><code>lean-runbook</code></h3>
+          <p class="muted"><strong>Design + 5-Stage Build</strong></p>
+          <p style="font-size:13.5px;margin-bottom:0;">
+            Bundles <code>lean-design</code> (15–20m 3-doc suite) and <code>lean-runbook</code> (vertical-slice TDD loop with dual-protocol Spec Gate hooks).
+          </p>
+        </div>
+        <div class="card">
+          <h3><code>swarmctl</code></h3>
+          <p class="muted"><strong>Portable Local Swarm</strong></p>
+          <p style="font-size:13.5px;margin-bottom:0;">
+            MCP server + UNIX CLI giving Claude Code (and other harnesses) background workers, a shared board, <code>share</code> worktrees, and cross-vendor runners.
+          </p>
+        </div>
+        <div class="card">
+          <h3><code>deep-review</code></h3>
+          <p class="muted"><strong>3-Axis Code Review</strong></p>
+          <p style="font-size:13.5px;margin-bottom:0;">
+            Parallel isolated audits for <em>correctness</em>, <em>structure</em>, and <em>testing</em>, plus <code>receiving-deep-review</code> to triage findings.
+          </p>
+        </div>
+        <div class="card">
+          <h3><code>build-loop</code></h3>
+          <p class="muted"><strong>Full-Code Loop &amp; Costs</strong></p>
+          <p style="font-size:13.5px;margin-bottom:0;">
+            Controller + <code>model: inherit</code> agents for full-code-in-plan loops, plus the standalone <code>context-costs</code> skill.
+          </p>
+        </div>
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:1.1rem;">
+        <table>
+          <thead>
+            <tr>
+              <th>Need</th>
+              <th>Use This</th>
+              <th class="only-agy">Antigravity 2.0 Mechanism</th>
+              <th class="only-claude">Claude Code Mechanism</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Design or rearchitect a project before coding</td>
+              <td><code>lean-design</code></td>
+              <td class="only-agy">Native <code>swarm</code> + <code>lean-design</code> shim</td>
+              <td class="only-claude"><code>swarmctl</code> (or <code>Agent</code>) + <code>lean-design</code> shim</td>
+            </tr>
+            <tr>
+              <td>Build a feature or multi-slice epic with Spec Gate</td>
+              <td><code>lean-runbook</code></td>
+              <td class="only-agy">Native <code>swarm</code> (<code>workspace: "share"</code>) + root <code>hooks.json</code></td>
+              <td class="only-claude"><code>swarmctl</code> (<code>share</code> worktrees) + <code>hooks/hooks.json</code></td>
+            </tr>
+            <tr>
+              <td>Parallel workers &amp; cross-vendor review</td>
+              <td>Native <code>swarm</code> / <code>swarmctl</code></td>
+              <td class="only-agy">Built-in <code>swarm</code> across Pools 1–3 (+ optional Pool 4)</td>
+              <td class="only-claude"><code>swarmctl</code> MCP tools across <code>claude</code>, <code>codex</code>, <code>gemini</code>, <code>opencode</code></td>
+            </tr>
+            <tr>
+              <td>Thorough branch / PR quality review</td>
+              <td><code>deep-review</code></td>
+              <td class="only-agy">3 parallel read-only <code>swarm</code> workers (or subagents)</td>
+              <td class="only-claude">3 parallel <code>deep-review:axis-reviewer</code> <code>Agent</code> calls</td>
+            </tr>
+            <tr>
+              <td>Full-code-in-plan loop or token cost audit</td>
+              <td><code>build-loop</code> / <code>context-costs</code></td>
+              <td class="only-agy">Portable skill + <code>references/version-custom-harness.md</code></td>
+              <td class="only-claude">Native plugin + <code>.loop/SEATS.md</code> + <code>Agent</code> / <code>codex</code> / <code>kiro</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 2: INTERACTIVE RECIPE PICKER -->
+    <section id="picker">
+      <h2>2. Quick-Start Recipe Picker</h2>
+      <p class="muted">Pick what you want to do — the commands and starter prompts automatically adapt to the harness selected in the top bar.</p>
+      <div class="picker-tabs" role="tablist">
+        <button type="button" class="active" data-recipe="design">Design a System</button>
+        <button type="button" data-recipe="feature">Build a Feature / Epic</button>
+        <button type="button" data-recipe="swarm">Run Parallel Workers</button>
+        <button type="button" data-recipe="review">Deep-Review a Branch / PR</button>
+      </div>
+      <div class="recipe-box" id="recipeBox"></div>
+    </section>
+
+    <!-- SECTION 3: INSTALLATION -->
+    <section id="install">
+      <h2>3. Installation Done Right</h2>
+      <p>
+        Every active plugin lives in <code>plugins/&lt;name&gt;/</code> and is registered in <code>.claude-plugin/marketplace.json</code>.
+        Running <code>./install.sh</code> derives plugins, skills, and CLI shims dynamically, installs <code>lean-runbook</code>,
+        <code>lean-design</code>, and <code>swarmctl</code> into <code>~/.local/bin</code>, and auto-repairs legacy symlinks from old
+        <code>claude/</code> or <code>antigravity/</code> layouts.
+      </p>
+
+      <div class="grid-2 env-split">
+        <div class="card agy-card only-agy">
+          <h3><span class="badge agy">Antigravity 2.0</span></h3>
+          <p class="muted">Links only plugins that ship a root <code>plugin.json</code> (currently <code>lean-runbook</code>) into <code>~/.gemini/config/plugins/</code>, plus CLI shims into <code>~/.local/bin</code>.</p>
+<pre><code>git clone https://github.com/effluvialsplurf/ai-plugins.git ~/Projects/ai-plugins
+cd ~/Projects/ai-plugins
+
+# Link Antigravity plugins + PATH shims (live edits)
+./install.sh --antigravity
+
+# Optional: also add portable review/cost skills
+./install.sh --skills ~/.gemini/config/skills --only deep-review,context-costs,build-loop
+
+# Check link health
+./install.sh --antigravity --status</code></pre>
+          <div class="callout warn">
+            <strong>Do NOT install <code>swarmctl</code> as an Antigravity plugin</strong> — <code>plugins/swarmctl/</code> intentionally omits root <code>plugin.json</code> so its MCP <code>swarm</code> tool never collides with Antigravity's built-in <code>swarm</code> tool. Also avoid installing <code>lean-design</code>/<code>lean-runbook</code> into <code>~/.gemini/config/skills</code> if <code>lean-runbook</code> is already linked as a plugin.
+          </div>
+        </div>
+
+        <div class="card claude-card only-claude">
+          <h3><span class="badge claude">Claude Code</span></h3>
+          <p class="muted">Installs all 4 plugins (<code>deep-review</code>, <code>build-loop</code>, <code>lean-runbook</code>, <code>swarmctl</code>) with automatic hooks &amp; MCP registration, plus CLI shims.</p>
+<pre><code># Recommended (local clone — installs marketplace + PATH shims)
+git clone https://github.com/effluvialsplurf/ai-plugins.git ~/Projects/ai-plugins
+cd ~/Projects/ai-plugins
+./install.sh --claude
+
+# Or install directly from GitHub inside Claude Code:
+/plugin marketplace add effluvialsplurf/ai-plugins
+/plugin install lean-runbook@ai-plugins
+/plugin install swarmctl@ai-plugins
+/plugin install deep-review@ai-plugins
+/plugin install build-loop@ai-plugins
+
+# Test a single plugin live without installing:
+claude --plugin-dir plugins/lean-runbook</code></pre>
+          <div class="callout ok">
+            <strong>Marketplace-only install (no <code>install.sh</code>)?</strong> No problem: <code>lean-runbook</code>'s <code>SessionStart</code> hook injects the resolved absolute paths to <code>runbook.py</code> and <code>design_check.py</code> even before your first <code>start</code>, so skills work without <code>~/.local/bin</code> shims. Restart Claude Code after installing plugins.
+          </div>
+        </div>
+      </div>
+
+      <p class="muted" style="margin-top:0.75rem;">
+        Installing on a machine that runs <strong>both</strong> harnesses? Just run <code>./install.sh</code> (defaults to <code>--all --link</code>).
+        Verify the repo itself anytime with <code>./tools/gate.sh</code> (full) or <code>./tools/gate.sh --fast</code>.
+      </p>
+    </section>
+
+    <!-- SECTION 4: ARCHITECTURE -->
+    <section id="architecture">
+      <h2>4. The 5 Abstract Roles &amp; 4-Tier Dispatch Ladder</h2>
+      <p>
+        Core skills (<code>lean-runbook</code>, <code>lean-design</code>) never name provider model IDs or harness APIs.
+        Every workflow maps onto <strong>five abstract roles</strong> and walks a deterministic <strong>4-tier dispatch ladder</strong>:
+      </p>
+
+      <div class="diagram-box" aria-label="Roles and Dispatch Ladder diagram">
+        <svg viewBox="0 0 900 220" xmlns="http://www.w3.org/2000/svg" role="img">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="currentColor" opacity="0.55" />
+            </marker>
+          </defs>
+          <!-- Top Row: 5 Abstract Roles -->
+          <text x="12" y="20" fill="currentColor" opacity="0.6" font-size="11" font-weight="700" font-family="system-ui,sans-serif">FIVE ABSTRACT ROLES (CORE SKILLS)</text>
+          <g font-family="system-ui,sans-serif" font-size="12">
+            <rect x="12" y="32" width="160" height="54" rx="8" fill="none" stroke="#6aa6ff" stroke-width="1.5" />
+            <text x="92" y="54" text-anchor="middle" fill="currentColor" font-weight="700">orchestrator</text>
+            <text x="92" y="72" text-anchor="middle" fill="currentColor" opacity="0.65" font-size="10.5">Main chat (stay thin)</text>
+
+            <rect x="192" y="32" width="160" height="54" rx="8" fill="none" stroke="#5bd69c" stroke-width="1.5" />
+            <text x="272" y="54" text-anchor="middle" fill="currentColor" font-weight="700">explorer</text>
+            <text x="272" y="72" text-anchor="middle" fill="currentColor" opacity="0.65" font-size="10.5">Fast, cheap, read-only</text>
+
+            <rect x="372" y="32" width="160" height="54" rx="8" fill="none" stroke="#b388ff" stroke-width="1.5" />
+            <text x="452" y="54" text-anchor="middle" fill="currentColor" font-weight="700">planner</text>
+            <text x="452" y="72" text-anchor="middle" fill="currentColor" opacity="0.65" font-size="10.5">Contracts &amp; designs</text>
+
+            <rect x="552" y="32" width="160" height="54" rx="8" fill="none" stroke="#f09a5c" stroke-width="1.5" />
+            <text x="632" y="54" text-anchor="middle" fill="currentColor" font-weight="700">builder</text>
+            <text x="632" y="72" text-anchor="middle" fill="currentColor" opacity="0.65" font-size="10.5">TDD code in worktree</text>
+
+            <rect x="732" y="32" width="156" height="54" rx="8" fill="none" stroke="#f27474" stroke-width="1.5" />
+            <text x="810" y="54" text-anchor="middle" fill="currentColor" font-weight="700">reviewer</text>
+            <text x="810" y="72" text-anchor="middle" fill="currentColor" opacity="0.65" font-size="10.5">Fresh, opposite vendor</text>
+          </g>
+
+          <!-- Connector -->
+          <line x1="450" y1="92" x2="450" y2="118" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5" marker-end="url(#arr)" />
+
+          <!-- Bottom Row: 4-Tier Dispatch Ladder -->
+          <text x="12" y="132" fill="currentColor" opacity="0.6" font-size="11" font-weight="700" font-family="system-ui,sans-serif">4-TIER DISPATCH LADDER (PICK FIRST AVAILABLE)</text>
+          <g font-family="system-ui,sans-serif" font-size="12">
+            <rect x="12" y="144" width="202" height="62" rx="8" fill="rgba(104,181,255,0.12)" stroke="#68b5ff" stroke-width="1.5" />
+            <text x="113" y="166" text-anchor="middle" fill="#68b5ff" font-weight="700">Tier 1 · Native swarm</text>
+            <text x="113" y="184" text-anchor="middle" fill="currentColor" opacity="0.75" font-size="10.5">Antigravity 2.0 default</text>
+            <text x="113" y="198" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="10">3+ pools, workspace: "share"</text>
+
+            <line x1="214" y1="175" x2="236" y2="175" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5" marker-end="url(#arr)" />
+
+            <rect x="238" y="144" width="202" height="62" rx="8" fill="rgba(240,154,92,0.12)" stroke="#f09a5c" stroke-width="1.5" />
+            <text x="339" y="166" text-anchor="middle" fill="#f09a5c" font-weight="700">Tier 2 · swarmctl</text>
+            <text x="339" y="184" text-anchor="middle" fill="currentColor" opacity="0.75" font-size="10.5">Claude Code default</text>
+            <text x="339" y="198" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="10">MCP/CLI, cross-vendor CLIs</text>
+
+            <line x1="440" y1="175" x2="462" y2="175" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5" marker-end="url(#arr)" />
+
+            <rect x="464" y="144" width="202" height="62" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.3" stroke-width="1.5" />
+            <text x="565" y="166" text-anchor="middle" fill="currentColor" font-weight="700">Tier 3 · Subagents</text>
+            <text x="565" y="184" text-anchor="middle" fill="currentColor" opacity="0.75" font-size="10.5">Claude Agent / invoke_subagent</text>
+            <text x="565" y="198" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="10">Same-harness fallback</text>
+
+            <line x1="666" y1="175" x2="688" y2="175" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5" marker-end="url(#arr)" />
+
+            <rect x="690" y="144" width="198" height="62" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-dasharray="4 3" stroke-width="1.5" />
+            <text x="789" y="166" text-anchor="middle" fill="currentColor" font-weight="700">Tier 4 · Fresh Sessions</text>
+            <text x="789" y="184" text-anchor="middle" fill="currentColor" opacity="0.75" font-size="10.5">Any harness / single thread</text>
+            <text x="789" y="198" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="10">File-backed .loop/ handoffs</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th class="only-agy">Antigravity 2.0 Seat (<code>harness-antigravity.md</code>)</th>
+              <th class="only-claude">Claude Code Seat (<code>harness-claude.md</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>orchestrator</code></td>
+              <td class="only-agy">Normal main chat (keep thin; never <code>/teamwork</code>)</td>
+              <td class="only-claude">Main Claude Code session (keep thin; read <code>LOOP-STATE.md</code> after compact)</td>
+            </tr>
+            <tr>
+              <td><code>explorer</code></td>
+              <td class="only-agy"><code>swarm</code> <code>scout</code> on <code>gemini-3.8-flash-low</code> (Pool 1, <code>inherit</code>)</td>
+              <td class="only-claude"><code>Explore</code> subagent on <code>haiku</code> (or read-only <code>swarmctl</code> worker)</td>
+            </tr>
+            <tr>
+              <td><code>planner</code></td>
+              <td class="only-agy"><code>swarm</code> <code>planner-&lt;slug&gt;</code> on <code>gemini-4-neon-medium</code> (Pool 1, <code>inherit</code>)</td>
+              <td class="only-claude">Fresh read-only <code>Agent</code> / <code>build-loop:planner</code> on <code>opus</code></td>
+            </tr>
+            <tr>
+              <td><code>builder</code></td>
+              <td class="only-agy"><code>swarm</code> <code>builder-*</code> / <code>slice-*</code> on <code>claude-sonnet-5-5-medium</code> (Pool 2), <code>claude-sub</code> (Pool 4), or <code>gemini-4-argon-medium</code> (Pool 3) in <code>workspace: "share"</code></td>
+              <td class="only-claude"><code>swarmctl</code> worker (<code>runner=claude</code>, <code>workspace=share</code>, <code>sonnet</code>) for parallel slices, or <code>Agent</code> (<code>sonnet</code>) for single slice</td>
+            </tr>
+            <tr>
+              <td><code>reviewer</code></td>
+              <td class="only-agy"><strong>Strict opposite vendor:</strong> Claude built &rarr; <code>gemini-4-neon-high</code>; Gemini built &rarr; <code>claude-opus-5-5-high</code> or Pool 4 <code>claude-sub</code> (<code>opus</code>, <code>high</code>)</td>
+              <td class="only-claude"><strong>Cross-vendor via <code>swarmctl</code>:</strong> <code>runner=gemini</code> or <code>runner=codex</code> (<code>inherit</code>, read-only). Same-family fallback: fresh <code>opus</code> + disclose in <code>branch-review.md</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 5: SWARM -->
+    <section id="swarm">
+      <h2>5. Swarm Orchestration: Antigravity vs. Claude Code</h2>
+      <p>
+        Both environments share the exact same mental model — <strong>a shared message board, `@worker` mentions, read-only
+        <code>inherit</code> workers, and isolated git worktree <code>share</code> workers</strong> — implemented natively in Antigravity
+        and via the <code>swarmctl</code> MCP server in Claude Code.
+      </p>
+
+      <div class="grid-2 env-split">
+        <!-- Antigravity Native Swarm -->
+        <div class="card agy-card only-agy">
+          <h3><span class="badge agy">Antigravity 2.0</span> Native <code>swarm</code></h3>
+          <div class="callout err">
+            <strong>NEVER use <code>/teamwork</code> with <code>lean-runbook</code> or <code>lean-design</code>.</strong>
+            <code>/teamwork</code> spawns an internal orchestrator that lacks the <code>swarm</code> tool and forces every worker onto Gemini Models via <code>invoke_subagent</code>, burning one quota pool and defeating cross-vendor review.
+          </div>
+          <ol>
+            <li><strong>Start in a normal chat:</strong> Call <code>swarm(action="models", all=True)</code> to check live remaining quotas across Pools 1–3 (plus <code>claude_status</code> if Pool 4 <code>claude-sub</code> MCP is enabled).</li>
+            <li><strong>Load <code>swarm_pane</code></strong> before adding the first workers so the Swarm Overview panel tracks threads cleanly.</li>
+            <li><strong>Pin exact models by role &amp; pool:</strong>
+              <ul>
+                <li><strong>Pool 1 (Gemini Flash / Neon):</strong> Scouts, Goldfish clarity/critic, Contract Planner, and Stage 5 cross-vendor review of Claude builds.</li>
+                <li><strong>Pool 2 (Claude &amp; GPT) / Pool 4 (<code>claude-sub</code>):</strong> Primary TDD builders and Stage 5 cross-vendor review of Gemini builds.</li>
+                <li><strong>Pool 3 (Gemini 4 Argon):</strong> Concurrent Wave Slot B builder alongside a Claude builder.</li>
+              </ul>
+            </li>
+            <li><strong>Use <code>workspace: "share"</code> for parallel builders</strong> (cap &le;3 concurrent, strictly disjoint files). Keep scouts, planners, and reviewers on <code>workspace: "inherit"</code> (read-only).</li>
+            <li><strong>Lifecycle rules:</strong>
+              <ul>
+                <li><code>waiting</code> workers cost <strong>0 tokens</strong> — keep <code>scout</code> alive across stages.</li>
+                <li>If a waiting worker's pool runs low (&lt;25%), switch it via <code>swarm(action="model", ...)</code> instead of killing it.</li>
+                <li>Kill one-shot reviewers once consumed; kill <code>share</code> builders <strong>only after merging</strong> (killing deletes the worktree).</li>
+                <li>Critics inspect <code>git diff epic/&lt;slug&gt;...slice/&lt;slug&gt;</code> — never <code>git checkout</code> a branch already checked out in a worker's worktree.</li>
+              </ul>
+            </li>
+          </ol>
+        </div>
+
+        <!-- Claude Code swarmctl -->
+        <div class="card claude-card only-claude">
+          <h3><span class="badge claude">Claude Code</span> <code>swarmctl</code> MCP &amp; CLI</h3>
+          <p class="muted">
+            When <code>swarmctl@ai-plugins</code> is installed, Claude Code gets four MCP tools mirroring Antigravity's board:
+            <code>swarm</code>, <code>post_message</code>, <code>read_board</code>, and <code>swarm_wait</code> — plus full CLI parity via <code>swarmctl</code>.
+          </p>
+          <ol>
+            <li><strong>Discover available runners:</strong> Run <code>swarm(action="models")</code> (or <code>swarmctl models</code>). Default runner is <code>claude</code> (uses your local Claude subscription — no API key needed). Additional runners: <code>codex</code>, <code>gemini</code>, <code>opencode</code>, <code>custom</code>.</li>
+            <li><strong>Choose workspace mode intentionally:</strong>
+              <ul>
+                <li><code>inherit</code> — worker runs <strong>read-only</strong> in your current checkout (scouts, planners, reviewers).</li>
+                <li><code>share</code> — worker gets its own isolated git worktree under <code>&lt;repo&gt;/.swarm/</code> and may edit, test, and commit.</li>
+                <li><code>unsafe</code> — explicit opt-in only (writes directly to your main checkout).</li>
+              </ul>
+            </li>
+            <li><strong>Standard coordinator loop:</strong>
+              <ol>
+                <li><code>swarm(action="add", name="slice-a", workspace="share", runner="claude", brief="...")</code></li>
+                <li>Continue coordinator work or spawn a second disjoint slice worker in parallel.</li>
+                <li><code>post_message(text="@slice-a ...")</code> to steer; <code>swarm_wait(since=&lt;seq&gt;, timeout_sec=45)</code> to block until replies arrive.</li>
+                <li>Spawn a fresh <strong>cross-vendor reviewer</strong> (<code>runner="gemini"</code> or <code>runner="codex"</code>, <code>workspace="inherit"</code>) against <code>git diff main...slice-a</code>.</li>
+                <li>Merge the branch, then <code>swarm(action="kill", name="slice-a")</code> (killing a dirty <code>share</code> worktree is blocked unless <code>force=true</code>).</li>
+              </ol>
+            </li>
+            <li><strong><code>Agent</code> tool vs. <code>swarmctl</code>:</strong> Use Claude Code's built-in <code>Agent</code> tool for quick, lightweight same-family subagents (<code>Explore</code>, <code>deep-review:axis-reviewer</code>). Use <code>swarmctl</code> for parallel isolated worktrees, long-lived board steering, and true cross-vendor reviews.</li>
+          </ol>
+        </div>
+      </div>
+
+      <h3 class="only-claude"><code>swarmctl</code> Quick CLI Parity Reference</h3>
+<pre class="only-claude"><code>swarmctl models                                       # List available runners &amp; default
+swarmctl add slice-1 --workspace share --brief "..."  # Spawn isolated worktree worker
+swarmctl add critic-1 --runner gemini --workspace inherit --brief "..."
+swarmctl status                                       # Inspect live workers &amp; worktrees
+swarmctl post "@slice-1 run ./tools/gate.sh before finishing"
+swarmctl wait --since 3 --timeout-sec 45              # Wait for board replies
+swarmctl read --since 0                               # Read board history
+swarmctl kill slice-1                                 # Retire &amp; clean worktree (--force if dirty)</code></pre>
+    </section>
+
+    <!-- SECTION 6: END-TO-END WORKFLOWS -->
+    <section id="workflows">
+      <h2>6. End-to-End Workflows</h2>
+
+      <h3>A. <code>lean-design</code> &rarr; <code>lean-runbook</code> (Primary Design &amp; Build Flow)</h3>
+      <p>
+        For any non-trivial feature or architecture change, run <code>lean-design</code> first to produce a zero-duplication 3-doc suite
+        (<code>docs/designs/&lt;slug&gt;/{design,tech-plan,spec}.md</code>, 15–20 min read budget, 100% <code>BR-*</code>/<code>RISK-*</code>/<code>INV-*</code>/<code>SLICE-*</code> traceability),
+        then hand <code>spec.md</code> straight to <code>lean-runbook</code>:
+      </p>
+
+      <div class="pipeline" aria-label="lean-runbook 6 stages">
+        <div class="stage">
+          <div class="num">STAGE 0</div>
+          <div class="title">Scope Triage</div>
+          <div class="muted">Cheap <code>explorer</code> recon &rarr; Single Slice (&le;3c / &le;600 LOC), Mini-Series (2–4), or Epic (&gt;4).</div>
+        </div>
+        <div class="stage gate-closed">
+          <div class="num">STAGE 1</div>
+          <div class="title">Compact Spec</div>
+          <div class="muted"><code>docs/specs/&lt;slug&gt;.md</code> (&le;300L). <span class="badge err" style="margin-top:4px;">Gate CLOSED</span></div>
+        </div>
+        <div class="stage gate-open">
+          <div class="num">STAGE 2</div>
+          <div class="title">Goldfish Gate</div>
+          <div class="muted">2 parallel fresh reviewers &rarr; user rulings &rarr; <code>done goldfish</code>. <span class="badge ok" style="margin-top:4px;">Gate OPENS</span></div>
+        </div>
+        <div class="stage">
+          <div class="num">STAGE 3</div>
+          <div class="title">Contract Plan</div>
+          <div class="muted"><code>.loop/&lt;slug&gt;/plan.md</code> (&le;300L). Signatures, invariants &amp; tests only — zero pasted code.</div>
+        </div>
+        <div class="stage">
+          <div class="num">STAGE 4</div>
+          <div class="title">TDD Build</div>
+          <div class="muted"><code>builder</code> commits on branch; 1-line quiet gate (<code>tools/gate.sh</code>) after every commit.</div>
+        </div>
+        <div class="stage">
+          <div class="num">STAGE 5</div>
+          <div class="title">Diff &amp; Ship</div>
+          <div class="muted">Fresh opposite-vendor <code>reviewer</code> &rarr; <code>branch-review.md</code> &rarr; merge &rarr; <code>finish</code>.</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3><code>lean-design</code> CLI Commands</h3>
+<pre><code>lean-design init &lt;slug&gt; --mode greenfield|redesign [--complex]
+lean-design done brief &lt;slug&gt;
+lean-design check docs/designs/&lt;slug&gt; [--strict]
+lean-design done draft &lt;slug&gt;
+lean-design done review &lt;slug&gt;
+lean-design done resolve &lt;slug&gt;
+lean-design status [&lt;slug&gt;]</code></pre>
+        </div>
+        <div class="card">
+          <h3><code>lean-runbook</code> CLI Commands</h3>
+<pre><code>lean-runbook start &lt;slug&gt; [--epic &lt;epic-slug&gt;]
+lean-runbook status [--all | --epic &lt;epic-slug&gt;]
+lean-runbook done &lt;spec|goldfish|plan|build|review&gt;
+lean-runbook skip gate --reason "&lt;why&gt;"
+lean-runbook finish
+lean-runbook pre-commit   # optional git hook check</code></pre>
+        </div>
+      </div>
+
+      <h3>B. <code>deep-review</code> + <code>receiving-deep-review</code> (Standalone Code Review)</h3>
+      <p>
+        Run <code>/deep-review [axes] [fixed-point] [--comment]</code> on any branch or PR. It pins the diff once and fans out up to three
+        read-only reviewers in parallel — <strong>correctness</strong>, <strong>structure</strong>, and <strong>testing</strong> — writing a
+        severity-ranked report to <code>docs/reviews/</code>. Follow up with <code>receiving-deep-review</code> to verify each finding before
+        patching (never blindly accept a reviewer claim without checking the code).
+      </p>
+
+      <h3>C. <code>build-loop</code> + <code>context-costs</code> (Full-Code Plan Loop &amp; Token Hygiene)</h3>
+      <p>
+        Prefer <code>build-loop</code> when you want complete code written into the plan before building. Initialize <code>.loop/SEATS.md</code>,
+        <code>.loop/PROJECT.md</code>, and <code>.loop/failure-classes.md</code> once per repo; every agent in <code>plugins/build-loop/agents/</code>
+        uses <code>model: inherit</code> so seat choices in <code>.loop/SEATS.md</code> control all models without hardcoding.
+        Read <code>context-costs</code> before running multi-agent sessions: cost scales with <em>calls &times; context</em>, so keep the
+        coordinator thin, batch reads, use quiet 1-line test gates, and compact or start fresh between slices.
+      </p>
+    </section>
+
+    <!-- SECTION 7: GATES, HOOKS & STATE -->
+    <section id="gates">
+      <h2>7. Spec Gates, Dual-Protocol Hooks &amp; Out-of-Repo State</h2>
+      <p>
+        <code>runbook.py</code> implements a single pure decision engine (<code>decide_write</code>, <code>decide_cmd</code>,
+        <code>format_session_start</code>) wired to both harnesses' native lifecycle hook protocols — plus a fail-closed
+        <code>pre-commit</code> command for hookless environments.
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Gate State</th>
+              <th class="only-agy">Antigravity 2.0 (<code>hooks.json</code>)</th>
+              <th class="only-claude">Claude Code (<code>hooks/hooks.json</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Edit/write repo code file (incl. symlinks &amp; cross-repo target)</td>
+              <td><span class="badge err">CLOSED</span></td>
+              <td class="only-agy"><code>decision: "deny"</code></td>
+              <td class="only-claude"><code>permissionDecision: "deny"</code></td>
+            </tr>
+            <tr>
+              <td>Write/edit/command touching state dir (<code>~/.cache/lean-runbook</code>)</td>
+              <td>Any (even inactive)</td>
+              <td class="only-agy"><code>decision: "deny"</code></td>
+              <td class="only-claude"><code>permissionDecision: "deny"</code></td>
+            </tr>
+            <tr>
+              <td>Spec or plan exceeds <strong>320 lines</strong> (write, <code>edit_file</code>, <code>Edit</code>, or <code>Append</code>)</td>
+              <td>Active</td>
+              <td class="only-agy"><code>decision: "force_ask"</code></td>
+              <td class="only-claude"><code>permissionDecision: "ask"</code></td>
+            </tr>
+            <tr>
+              <td>Agent runs <code>done goldfish</code>, <code>skip gate</code>, <code>start --force</code>, or early <code>finish</code></td>
+              <td>Active / CLOSED</td>
+              <td class="only-agy"><code>decision: "force_ask"</code> (user approves)</td>
+              <td class="only-claude"><code>permissionDecision: "ask"</code> (user approves)</td>
+            </tr>
+            <tr>
+              <td>Session starts</td>
+              <td>Active / Inactive</td>
+              <td class="only-agy">Active: <code>injectSteps</code> summary + paths; Inactive: <code>{}</code></td>
+              <td class="only-claude">Active: <code>additionalContext</code> summary + paths; Inactive: 1-line script-path fallback</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>Why Parallel Worktree Gates Never Collide or Split-Brain</h3>
+        <ul>
+          <li><strong>Unified state roots:</strong> <code>LEAN_RUNBOOK_DATA</code> (default <code>~/.cache/lean-runbook/repos/&lt;sha256[:16]&gt;/state.json</code>) and <code>LEAN_DESIGN_DATA</code> (default <code>~/.cache/lean-design/repos/&lt;sha256[:16]&gt;/&lt;slug&gt;.json</code>).</li>
+          <li><strong>Zero split-brain:</strong> Neither <code>CLAUDE_PLUGIN_DATA</code> nor <code>PLUGIN_DATA</code> is used, because hooks and interactive Bash shells don't share those env vars. Both hooks and CLI shims always read the exact same state file.</li>
+          <li><strong>Per-worktree isolation:</strong> The hash keys on each git worktree's resolved <code>--show-toplevel</code> path, so two parallel <code>share</code> workers automatically get independent Spec Gates while <code>lean-runbook status --all</code> (or <code>--epic &lt;slug&gt;</code>) aggregates all of them from your main checkout.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- SECTION 8: DO THIS, NOT THAT -->
+    <section id="pitfalls">
+      <h2>8. Common Pitfalls ("Do This, Not That")</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Pitfall</th>
+              <th>Why It Breaks</th>
+              <th>Do This Instead</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="only-agy">
+              <td>Running <code>/teamwork</code> in Antigravity</td>
+              <td>Spawns an orchestrator without <code>swarm</code>; burns only Gemini quota and breaks cross-vendor review.</td>
+              <td>Run <code>lean-runbook</code> / <code>lean-design</code> directly in a normal chat using native <code>swarm</code>.</td>
+            </tr>
+            <tr class="only-agy">
+              <td>Installing <code>swarmctl</code> as an Antigravity plugin</td>
+              <td>Its MCP tool name <code>swarm</code> collides with Antigravity's native <code>swarm</code> tool.</td>
+              <td>Let <code>./install.sh --antigravity</code> skip <code>swarmctl</code>; use native <code>swarm</code> in Antigravity.</td>
+            </tr>
+            <tr class="only-agy">
+              <td>Installing <code>lean-runbook</code> in both <code>plugins/</code> and <code>skills/</code></td>
+              <td>Antigravity loads duplicate copies of <code>lean-design</code> and <code>lean-runbook</code>.</td>
+              <td>Keep <code>lean-runbook</code> in <code>~/.gemini/config/plugins/</code> only; put only other skills in <code>skills/</code>.</td>
+            </tr>
+            <tr>
+              <td>Cramming &gt;600 LOC or &gt;3 commits into one slice</td>
+              <td>Bloat triggers reviewer fatigue, slow fix loops, and muddy diffs.</td>
+              <td>Split in Stage 0 into a 2–4 slice Mini-Series or an Epic with disjoint parallel waves.</td>
+            </tr>
+            <tr>
+              <td>Doing heavy file reads or diff reading in the Coordinator</td>
+              <td>Inflates every subsequent turn's context cost across the entire session.</td>
+              <td>Delegate scouting to <code>explorer</code>, planning to <code>planner</code>, and diff inspection to fresh <code>reviewer</code>s.</td>
+            </tr>
+            <tr>
+              <td><code>git checkout slice/&lt;slug&gt;</code> inside a read-only critic</td>
+              <td>Fails with <code>already used by worktree</code> while a <code>share</code> worker still owns that branch.</td>
+              <td>Inspect <code>git diff &lt;base&gt;...slice/&lt;slug&gt;</code> and <code>git show slice/&lt;slug&gt;:&lt;path&gt;</code> directly.</td>
+            </tr>
+            <tr>
+              <td>Letting the builder's own model family silently sign off Stage 5</td>
+              <td>Shared blind spots miss spec drift and edge-case bugs.</td>
+              <td>Assign opposite vendor (Antigravity <code>swarm</code> or Claude <code>swarmctl</code>); if single-vendor, disclose in <code>branch-review.md</code> and run full boundary/mutation tests.</td>
+            </tr>
+            <tr>
+              <td>Committing <code>.loop/</code> scratch state to git</td>
+              <td>Pollutes feature PRs with ephemeral loop ledgers and review scratchpads.</td>
+              <td>Keep <code>.loop/</code> untracked (or in <code>.git/info/exclude</code>); commit only code, tests, and approved docs.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <span><code>ai-plugins</code> · Single-file Operator's Guide (<code>docs/guide.html</code>)</span>
+      <span>Supported natively: Antigravity 2.0 &amp; Claude Code · See <code>docs/PORTABILITY.md</code> for other harnesses</span>
+    </footer>
+  </main>
+</div>
+
+<script>
+(function () {
+  const RECIPES = {
+    design: {
+      title: "Design or Rearchitect a System (lean-design)",
+      summary: "Produces 3 tightly budgeted docs under docs/designs/<slug>/ (design.md, tech-plan.md, spec.md) verified by lean-design check --strict and a 3-lens cross-vendor Goldfish review.",
+      both: {
+        steps: [
+          "Invoke lean-design in a fresh session (greenfield or redesign from an existing doc).",
+          "Answer 1–2 crisp rounds of Stage 1 Elephant Interrogation to lock brief.md.",
+          "Let the planner draft the 3 docs, run 3 parallel fresh Goldfish reviewers (clarity, opposite-vendor architect, handoff), resolve tradeoffs, and pass lean-design check --strict."
+        ],
+        promptAgy: "Start lean design for <slug> (redesign from <input-doc> | greenfield). Use native swarm across pools (never /teamwork) for scout, drafter, and 3-lens cross-vendor Goldfish review.",
+        promptClaude: "Start lean design for <slug> (redesign from <input-doc> | greenfield). Use lean-design CLI shims, fresh subagents / swarmctl for drafter and 3-lens Goldfish review (cross-vendor reviewer via swarmctl if gemini/codex is available)."
+      }
+    },
+    feature: {
+      title: "Build a Feature or Multi-Slice Epic (lean-runbook)",
+      summary: "Runs Stage 0 scope triage, locks a <=300-line spec behind a hook-enforced Spec Gate, passes 2-pass Goldfish review, writes a <=300-line contract plan, builds via TDD + 1-line quiet gate, and finishes with cross-vendor review.",
+      both: {
+        steps: [
+          "Keep your main chat thin as orchestrator — delegate recon, planning, coding, and diff review.",
+          "Approve opening the Spec Gate only after Stage 2 Goldfish findings are resolved (lean-runbook done goldfish).",
+          "After Stage 5 cross-vendor review passes and ./tools/gate.sh is green, merge, run lean-runbook finish, and compact before the next slice."
+        ],
+        promptAgy: "Start lean runbook for <slug> using docs/designs/<slug>/spec.md. Check live quotas with swarm(action=\"models\", all=True), load swarm_pane, and route across Pools 1-3 (+ Pool 4 claude-sub if available) with opposite-vendor Stage 5 review.",
+        promptClaude: "Start lean runbook for <slug> using docs/designs/<slug>/spec.md. Keep main chat thin; use swarmctl (workspace=\"share\" for parallel slices, inherit for read-only reviewers) or Agent subagents, enforce ./tools/gate.sh after every commit, and use a non-Claude swarmctl reviewer for Stage 5 if available."
+      }
+    },
+    swarm: {
+      title: "Coordinate Parallel Workers Across Worktrees",
+      summary: "Run up to 3 disjoint slice builders concurrently in isolated git worktrees, steer via @worker board messages, and verify each branch with a fresh opposite-vendor reviewer before merging.",
+      both: {
+        steps: [
+          "Verify slice file boundaries are strictly disjoint before spawning concurrent share workers.",
+          "Wait on the board instead of polling; keep read-only scouts on inherit so they stay cheap.",
+          "Merge a worker's branch and run the integration gate BEFORE killing the worker (killing deletes the share worktree)."
+        ],
+        promptAgy: "Check swarm(action=\"models\", all=True) and load swarm_pane. Spawn two parallel workspace=\"share\" builders on disjoint slices (split across Claude and Argon pools), and review each merged-ready branch with a fresh opposite-vendor inherit critic inspecting git diff <base>...<branch>.",
+        promptClaude: "Run swarm(action=\"models\") via swarmctl. Spawn two parallel workspace=\"share\" workers on disjoint slices, coordinate via post_message and swarm_wait, then spawn a fresh read-only inherit reviewer (runner=gemini or codex if available) before merging and killing the share workers."
+      }
+    },
+    review: {
+      title: "Deep-Review a Branch or PR (deep-review)",
+      summary: "Fans out 3 isolated read-only reviewers (correctness, structure, testing) against a pinned diff, writes a severity-ranked report to docs/reviews/, then uses receiving-deep-review to verify and fix real defects.",
+      both: {
+        steps: [
+          "Pin the diff once (default merge-base with main, or pass a commit/branch/PR number).",
+          "Run all three axes in parallel with zero author history (ideally on an opposite model family).",
+          "Triage the resulting docs/reviews/ report with receiving-deep-review before making fixes."
+        ],
+        promptAgy: "Run deep-review against main on this branch using 3 parallel fresh read-only swarm workers (correctness, structure, testing) on the opposite model family from the branch author, then summarize blockers and high findings.",
+        promptClaude: "/deep-review main\n# Follow up once the report lands in docs/reviews/:\nUse receiving-deep-review on docs/reviews/<report>.md — verify each blocker/high finding against the code before fixing."
+      }
+    }
+  };
+
+  let currentEnv = "both";
+  let currentRecipe = "design";
+
+  function escHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function renderRecipe() {
+    const r = RECIPES[currentRecipe];
+    const box = document.getElementById("recipeBox");
+    const stepsHtml = r.both.steps.map(s => `<li>${escHtml(s)}</li>`).join("");
+    let prompts = "";
+    if (currentEnv === "both" || currentEnv === "antigravity") {
+      prompts += `<div class="only-agy"><div style="margin:0.8rem 0 0.25rem;font-size:12.5px;font-weight:700;"><span class="badge agy">Antigravity 2.0 Prompt</span></div><pre><code>${escHtml(r.both.promptAgy)}</code></pre></div>`;
+    }
+    if (currentEnv === "both" || currentEnv === "claude") {
+      prompts += `<div class="only-claude"><div style="margin:0.8rem 0 0.25rem;font-size:12.5px;font-weight:700;"><span class="badge claude">Claude Code Prompt</span></div><pre><code>${escHtml(r.both.promptClaude)}</code></pre></div>`;
+    }
+    box.innerHTML = `<h3 style="margin-top:0;">${escHtml(r.title)}</h3><p class="muted">${escHtml(r.summary)}</p><ol style="margin:0.4rem 0 0.6rem;padding-left:1.25rem;">${stepsHtml}</ol>${prompts}`;
+    attachCopyButtons(box);
+  }
+
+  function attachCopyButtons(root) {
+    root.querySelectorAll("pre").forEach(pre => {
+      if (pre.querySelector(".copy-btn")) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-btn";
+      btn.textContent = "Copy";
+      btn.addEventListener("click", () => {
+        const code = pre.querySelector("code")?.textContent || "";
+        const done = () => {
+          btn.textContent = "Copied";
+          btn.classList.add("copied");
+          setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(code).then(done, () => fallbackCopy(code, done));
+        } else {
+          fallbackCopy(code, done);
+        }
+      });
+      pre.appendChild(btn);
+    });
+  }
+
+  function fallbackCopy(text, cb) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); cb(); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+
+  // Environment switcher
+  document.querySelectorAll(".seg button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentEnv = btn.dataset.env;
+      document.body.setAttribute("data-env", currentEnv);
+      document.querySelectorAll(".seg button").forEach(b => b.classList.toggle("active", b === btn));
+      renderRecipe();
+    });
+  });
+
+  // Recipe tabs
+  document.querySelectorAll(".picker-tabs button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentRecipe = btn.dataset.recipe;
+      document.querySelectorAll(".picker-tabs button").forEach(b => b.classList.toggle("active", b === btn));
+      renderRecipe();
+    });
+  });
+
+  // Theme toggle (respects system preference by default)
+  const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  const savedTheme = (() => { try { return localStorage.getItem("ai-plugins-guide-theme"); } catch (_) { return null; } })();
+  const initTheme = savedTheme || (prefersLight ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", initTheme);
+  const toggleBtn = document.getElementById("themeToggle");
+  function syncThemeLabel() {
+    const t = document.documentElement.getAttribute("data-theme");
+    toggleBtn.textContent = t === "light" ? "Dark Mode" : "Light Mode";
+  }
+  syncThemeLabel();
+  toggleBtn.addEventListener("click", () => {
+    const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("ai-plugins-guide-theme", next); } catch (_) {}
+    syncThemeLabel();
+  });
+
+  // Scroll-spy for TOC
+  const tocLinks = Array.from(document.querySelectorAll(".toc a"));
+  const sections = tocLinks.map(a => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = "#" + entry.target.id;
+          tocLinks.forEach(a => a.classList.toggle("active", a.getAttribute("href") === id));
+        }
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    sections.forEach(s => io.observe(s));
+  }
+
+  attachCopyButtons(document);
+  renderRecipe();
+})();
+</script>
+</body>
+</html>

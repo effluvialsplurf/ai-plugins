@@ -12,6 +12,7 @@ ai-plugins/
 ├── .claude-plugin/
 │   └── marketplace.json      # Claude Code marketplace manifest (ai-plugins)
 ├── docs/
+│   ├── guide.html            # Interactive single-page Operator's Guide (Antigravity 2.0 & Claude Code, including swarm)
 │   ├── PORTABILITY.md        # Plugin-by-plugin harness & model-family verification matrix
 │   └── CONVERSION-PROMPTS.md # Copy-paste prompts to convert non-agnostic layers per model family/harness
 ├── install.sh                # Registry-driven installer (reads marketplace.json) for Antigravity, Claude Code, Agent Skills dirs, PATH shims
