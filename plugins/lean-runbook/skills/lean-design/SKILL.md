@@ -17,7 +17,7 @@ for sweeping platform rearchitectures) and that **`lean-runbook`** can execute d
 Run tracker and budget/traceability validator commands with the `lean-design` shim (on `PATH` after `install.sh`):
 
 `lean-design <subcommand>`
-*(No shim? Use the `design_check.py` path injected at session start, or `skills/lean-design/scripts/design_check.py` in this plugin. The script and templates are pure Python 3.9+ stdlib and Markdown with zero harness dependencies.)*
+*(No shim? Run `python3 <skill dir>/scripts/design_check.py <subcommand>`, relative to this skill's own directory. Once a feature is active, the session-start context also prints the absolute path. The script and templates are pure Python 3.9+ stdlib and Markdown with zero harness dependencies.)*
 
 > Orchestrate with the 5 roles and the 4-tier dispatch ladder in `../lean-runbook/SKILL.md` (native swarm, `swarmctl`,
 > native subagents, fresh sessions); harness details live in `../lean-runbook/references/harness-*.md`. Map the abstract seats
@@ -59,7 +59,7 @@ of the reader-facing suite.
 
 ## Stage-by-Stage Execution Rules
 
-### Stage 0: Intake, Mode Detection & Quota Check
+### Stage 0: Intake & Mode Detection
 1. **Pick a dispatch tier:** walk the ladder in `../lean-runbook/SKILL.md` and read your harness reference.
 2. **Detect Mode & Tier:**
    - **Redesign / Rearchitecture Mode (`--mode redesign`):** Triggered whenever the user supplies an existing/rejected EGM plan, RFC, legacy doc, or current platform to reform. Every major risk/flaw in the input becomes a numbered `RISK-*` entry that the new architecture must **structurally eliminate** (not merely mitigate with checklists).

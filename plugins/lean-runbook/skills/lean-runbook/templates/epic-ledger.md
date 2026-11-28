@@ -36,4 +36,4 @@ Logged by Slice Workers instead of scope-creeping their active slice. Triage wit
 
 ## 5. Merge & Verification Log
 - `<YYYY-MM-DD>` initialized `epic/<epic-slug>`
-- *(Per merged slice: `<date> #<N> <slug> (<sha>) | Builder: <model> | Critic: <model> | Gate: <result>`)*
+- *(Per merged slice: `<date> #<N> <slug> (<sha>) | Builder: <model> | Reviewer: <model> | Gate: <result>`)*

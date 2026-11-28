@@ -15,7 +15,7 @@ single vertical slices to multi-worker **Epic Orchestration**.
 Run state commands with the `lean-runbook` shim (on `PATH` after `install.sh`):
 
 `lean-runbook <subcommand>`
-*(No shim? Use the `runbook.py` path injected at session start, or `skills/lean-runbook/scripts/runbook.py` in this plugin. The CLI and `templates/*.md` are pure Python 3.9+ stdlib and Markdown.)*
+*(No shim, e.g. the first `start` in a marketplace-only install? Run `python3 <skill dir>/scripts/runbook.py <subcommand>`, relative to this skill's own directory. Once a feature is active, the session-start context also prints the absolute path. The CLI and `templates/*.md` are pure Python 3.9+ stdlib and Markdown.)*
 
 State lives outside the repo (`LEAN_RUNBOOK_DATA` or `~/.cache/lean-runbook/`) and is keyed per git working
 tree, so parallel worktree workers automatically get independent Spec Gates. Lifecycle hooks
@@ -33,8 +33,7 @@ heavy reading, coding, or raw diff review. Dispatch every other role down this l
 
 Never ask the user to define workers or model tiers. Prefer a strong model for `planner` and `reviewer`, a mid model
 for `builder`, a fast one for `explorer`, and a different model family for the final `reviewer` when available.
-Model names, tool calls, and quota routing live only in `references/harness-*.md`; read yours:
-[claude](./references/harness-claude.md), [antigravity](./references/harness-antigravity.md), [generic](./references/harness-generic.md).
+Model names, tool calls, and quota routing live only in `references/harness-*.md`; read yours: [Claude Code](./references/harness-claude.md), [Antigravity](./references/harness-antigravity.md), or [generic](./references/harness-generic.md) (the fallback for any other harness).
 
 ## Stage 0: Pre-Flight & Scope Triage (BEFORE `lean-runbook start`)
 
@@ -60,12 +59,12 @@ Whenever the user asks to build a feature, feature set, or epic, **do not cram e
 
 **Routing action:**
 - **Single Slice:** State briefly why it fits 1 slice (`~N commits, ~M LOC`) + your seat plan, and immediately run `lean-runbook start <slug>`.
-- **Mini-Series (2–4 slices):** Propose a **Slice Roadmap table** (`Slice # | Slug | Testable Deliverable | Est. Commits/LOC | Depends On | Builder / Reviewer`), get user approval (suggest `/grill-me` if fuzzy), record deferred slugs in Slice 1's Out of Scope, start **Slice 1 only**, and recommend `/compact` between slices.
+- **Mini-Series (2–4 slices):** Propose a **Slice Roadmap table** (`Slice # | Slug | Testable Deliverable | Est. Commits/LOC | Depends On | Builder / Reviewer`), get user approval (suggest a short grilling interview if fuzzy), record deferred slugs in Slice 1's Out of Scope, start **Slice 1 only**, and recommend compacting or clearing context between slices.
 - **Epic Mode (>4 slices, open-ended brainstorming, or parallel workstreams):**
-  Keep the main chat a thin Epic Coordinator owning `epic/<epic-slug>` + `.loop/epics/<epic-slug>/EPIC.md` (from [templates/epic-ledger.md](./templates/epic-ledger.md)); dispatch one `builder` Slice Worker per slice in its own git worktree (≤3 concurrent, disjoint files) and review each on a different model family. Antigravity specifics: [harness-antigravity-epic.md](./references/harness-antigravity-epic.md).
+  Keep the main chat a thin Epic Coordinator owning `epic/<epic-slug>` + `.loop/epics/<epic-slug>/EPIC.md` (from [templates/epic-ledger.md](./templates/epic-ledger.md)); dispatch one `builder` Slice Worker per slice in its own git worktree (≤3 concurrent, disjoint files) and review each on a different model family. Antigravity specifics: [harness-antigravity-epic.md](./references/harness-antigravity-epic.md); other harnesses follow its §2-4, substituting their own delegation tier for `swarm`, the `lean-runbook` shim (or `scripts/runbook.py`) for its install-specific script paths, and a fresh `reviewer` for its workflow-runner calls.
 
 ### Pre-Flight Environment Check
-- **Quiet gate discovery:** Detect `tools/gate.sh` (or ask the user for the repo's quiet test command to pass as `gate_cmd`/`fast_cmd`).
+- **Quiet gate discovery:** Detect `tools/gate.sh` (or ask the user for the repo's quiet test command as the project's gate and fast commands).
 - **Unattended workers:** workers that cannot prompt interactively need `tools/gate.sh` and `git` pre-approved (sandbox or allowlist).
 
 ## 5 Stages & Hard Budgets
@@ -76,7 +75,7 @@ Whenever the user asks to build a feature, feature set, or epic, **do not cram e
 | 2 | **2-Pass Goldfish Gate** | 2 parallel read-only `reviewer`s: `goldfish-clarity` (fast) + `goldfish-critic` (strong; verifies claims against real code) | `.loop/<slug>/goldfish-report.md` | Resolve findings with user → `done goldfish` (user approves; the hook asks) |
 | 3 | **Contract Plan** | 1 fresh read-only `planner` | `.loop/<slug>/plan.md` (**≤300 lines**, signatures + invariants + test assertions only) | **Zero pasted full code; zero scratch-repo dry-runs** |
 | 4 | **TDD Build Loop** | `builder` (mid model; parallel waves only on disjoint files) | Commits on the feature branch + `.loop/<slug>/LOOP-STATE.md` | 1-line quiet gate (`tools/gate.sh`) after every commit; fresh fixer on FAIL only (max 2) |
-| 5 | **Adversarial Diff & Ship** | Fresh read-only `reviewer`, a different model family from the `builder` when available | `.loop/<slug>/branch-review.md` (with `Builder:` & `Reviewer:` model receipt) → 1 fixer pass for blocker/high → PR/merge | Quiet gate green → `lean-runbook finish` → retire workers (suggest `/compact` before next slice) |
+| 5 | **Adversarial Diff & Ship** | Fresh read-only `reviewer`, a different model family from the `builder` when available; if the families match, tell the user and record it in `branch-review.md`, and never claim cross-family when both are the same family | `.loop/<slug>/branch-review.md` (with `Builder:` & `Reviewer:` model receipt) → 1 fixer pass for blocker/high → PR/merge | Quiet gate green → `lean-runbook finish` → retire workers (suggest compacting context before next slice) |
 
 ## Organizing Agents
 - **Keep the orchestrator thin:** never read large diffs or write slice code in the main chat.

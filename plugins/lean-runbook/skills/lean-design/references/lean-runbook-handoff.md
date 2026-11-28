@@ -18,7 +18,7 @@ without repeating Stage 0–1 brainstorming or re-reading legacy documents.
 - `docs/designs/<slug>/spec.md` Section 4 provides the exact approved **Slice Roadmap** (`SLICE-1`..`SLICE-N`), Section 3 provides the **Shared Contracts**, and Section 6 provides **Per-Slice Contract Seeds**.
 - **Launch prompt for user:**
   `Start lean runbook for <slice-slug-1> from docs/designs/<slug>/spec.md (Mini-Series Slice 1 of N)`
-- Each slice creates its compact `docs/specs/<slice-slug>.md` (≤300 lines) directly from its seed in `spec.md` + cites `BR-*`/`INV-*` by ID. Recommend `/compact` between slices.
+- Each slice creates its compact `docs/specs/<slice-slug>.md` (≤300 lines) directly from its seed in `spec.md` + cites `BR-*`/`INV-*` by ID. Recommend compacting context between slices.
 
 ### Case C: Epic Mode (`>4 slices` or Parallel Platform Rearchitecture)
 - `docs/designs/<slug>/spec.md` maps **1-to-1** onto `.loop/epics/<slug>/EPIC.md` (`templates/epic-ledger.md`):
