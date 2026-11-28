@@ -86,7 +86,7 @@ Whenever the user asks to build a feature, feature set, or epic, **do not cram e
 1. **Vertical Slices Only:** Always run Stage 0 triage first. Never put >3 commits or >600 LOC in one loop—split larger features into 2–4 sequential vertical slices.
 2. **Tables Over Prose:** Use [templates/compact-spec.md](./templates/compact-spec.md), [templates/contract-plan.md](./templates/contract-plan.md), and [templates/loop-state.md](./templates/loop-state.md). Rejected alternatives are 1-line table rows, never essays.
 3. **No Scratch-Copy Dry-Runs:** Planners are read-only and write contracts (signatures, invariants, edge-case tables, test assertions). Builders implement & run tests directly on the branch.
-4. **1-Line Quiet Gate:** Every project should expose a quiet gate script (e.g., `tools/gate.sh`) that prints 1 line on PASS (`GATE OK`) and only the failing tail on FAIL.
+4. **1-Line Quiet Gate:** Every project should expose a quiet gate script (e.g., `tools/gate.sh`) that prints 1 line on PASS (`gate: PASS`) and only the failing tail on FAIL.
 5. **Respect the Spec Gate:** Never bypass the hook gate. When Stage 2 is resolved (or the user explicitly wants an override), run `lean-runbook done goldfish` or `lean-runbook skip gate --reason "..."` — the hook asks the user for explicit approval.
 
 ## Quick Commands

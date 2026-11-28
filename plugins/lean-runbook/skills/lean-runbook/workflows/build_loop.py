@@ -92,7 +92,9 @@ async def run_quiet_gate(cmd, label):
             toolSummary=label,
             WaitMsBeforeAsync=10000,
         )
-        ok = ("GATE FAIL" not in out) and ("Command exited with code 0" in out or "GATE OK" in out or "GATE FAST OK" in out)
+        ok = ("GATE FAIL" not in out and "gate: FAIL" not in out) and (
+            "Command exited with code 0" in out or "gate: PASS" in out or "GATE OK" in out or "GATE FAST OK" in out
+        )
         return ok, out
     except ToolError as exc:
         return False, str(exc.message)
@@ -181,12 +183,15 @@ if skip_critic:
 else:
     # Stage 5: 1 Fresh Adversarial Whole-Branch Critic
     phase("stage-5-adversarial-branch-review")
-    diff_stat = await call_tool(
-        "run_command",
-        CommandLine=f"git diff --stat {base_ref}...HEAD",
-        toolSummary="Branch diff summary",
-        WaitMsBeforeAsync=5000,
-    )
+    try:
+        diff_stat = await call_tool(
+            "run_command",
+            CommandLine=f"git diff --stat {base_ref}...HEAD",
+            toolSummary="Branch diff summary",
+            WaitMsBeforeAsync=5000,
+        )
+    except ToolError as exc:
+        diff_stat = f"(diff summary unavailable: {exc.message})"
     critic_prompt = f"""You are a fresh-context Adversarial Whole-Branch Code Reviewer.
 Your job is to find REAL bugs, missing edge-case tests, and spec/rigor violations — never style nits.
 Review the diff `{base_ref}...HEAD` against `{spec_path}` and repo rigor rules (`CLAUDE.md` / `.loop/PROJECT.md` if present).

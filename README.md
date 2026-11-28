@@ -51,7 +51,6 @@ Choose the section matching your harness. All scripts require **Python 3.9+** (s
 In Claude Code:
 
 ```text
-/plugin marketplace add google/elephant-goldfish-model
 /plugin marketplace add effluvialsplurf/ai-plugins
 /plugin install deep-review@ai-plugins
 /plugin install build-loop@ai-plugins
@@ -109,7 +108,7 @@ Or install both Antigravity and Claude Code at once with `./install.sh` (default
 ### 3. Any Other Harness (Codex CLI, Gemini CLI, Cursor, Windsurf, OpenCode, Kiro, Cline/Roo Code, Open-Weights)
 
 Clone the repository once, then install the **portable Agent Skills** (`deep-review`, `receiving-deep-review`,
-`build-loop`, `context-costs`, `lean-design`, `lean-runbook`) into your harness's skills directory with `./install.sh`:
+`build-loop`, `context-costs`, `lean-design`, `lean-runbook`, `swarmctl`) into your harness's skills directory with `./install.sh`:
 
 ```bash
 git clone https://github.com/effluvialsplurf/ai-plugins.git ~/Projects/ai-plugins
@@ -149,6 +148,7 @@ Every skill is a standard directory containing `SKILL.md`. Copy or symlink any s
 - `plugins/build-loop/skills/build-loop` & `plugins/build-loop/skills/context-costs` *(keep `plugins/build-loop/{templates,scripts}` handy in your clone)*
 - `plugins/lean-runbook/skills/lean-design` *(self-contained with `scripts/design_check.py` and `templates/`)*
 - `plugins/lean-runbook/skills/lean-runbook` *(self-contained with `scripts/runbook.py` CLI and `templates/`)*
+- `plugins/swarmctl/skills/swarmctl` *(pair with `./install.sh --bin-dir ~/.local/bin --only swarmctl` and register `swarmctl mcp` as a stdio MCP server)*
 
 ---
 

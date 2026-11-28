@@ -66,4 +66,4 @@ Replaces `/egm:egm-drift-report`. Run after `lean-runbook` finishes a feature or
    - **Summary counts:** `Matched | Drifted (Intentional) | Drifted (Accidental) | Unverified`
    - **Drift Table:** `ID | Planned Contract | Actual Implementation | Classification | Recommended Action (Update Doc vs Fix Code)`
    - **Unplanned Additions:** Any significant subsystem/contract added during build that should be backfilled into `design.md` or `tech-plan.md`.
-3. Mark `design_check.py done drift <slug>` and retire `drift-auditor`.
+3. Mark `lean-design done drift <slug>` and retire `drift-auditor`.

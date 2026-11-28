@@ -23,6 +23,7 @@ Run `swarm(action="models", all=True)` at Stage 0 (or start of an Epic wave) to 
 | **Pool 1: Gemini Models** | 5-hour + Weekly | `gemini-3.8-flash-{low,medium,high}`<br>`gemini-4-neon-{low,medium,high,xhigh}`<br>`gemini-4-hydrogen-{low,medium,high,xhigh}`<br>`gemini-pro-orchestrator-neon` | **Preferred for all non-implementation & review steps** (`gemini-4-neon-medium` for planning/Goldfish, `gemini-4-neon-high` for cross-vendor reviews when Claude built), plus cheap scouting & clarity passes (`gemini-3.8-flash-low` / `-medium`) |
 | **Pool 2: Claude & GPT** | Independent 5-hour + Weekly | `claude-sonnet-5-5-{low,medium,high}`<br>`claude-opus-5-5-{low,medium,high}`<br>`gpt-oss-120b-medium` | Primary TDD Builder / Slice Worker (`claude-sonnet-5-5-medium`, or Pool 4 `claude-sub`), flagship Adversarial Critic when Gemini built (`claude-opus-5-5-high`, or Pool 4 `claude-sub` `opus` `high`), lightweight clarity/alt (`gpt-oss-120b-medium`) |
 | **Pool 3: Gemini 4 Argon** | Independent Weekly | `gemini-4-argon-{low,medium,high}`<br>`gemini-pro-orchestrator-argon` | Parallel implementation Slice Worker (`gemini-4-argon-medium`), and fallback for planning/review only if Pool 1 Neon drops below 25% |
+| **Pool 4: `claude-sub` *(optional MCP)*** | User's personal Claude subscription | `claude-sub` (`sonnet` / `opus` / `haiku` via thin `gemini-3.8-flash-low` relay) | Optional fourth pool when the user has a local `claude-sub` MCP server enabled; counts as an authentic Claude vendor seat |
 
 ---
 
@@ -43,7 +44,7 @@ Use this allocation by default so **every** feature — Single Slice, Mini-Serie
 ### Cross-Vendor Verification Receipt (Mandatory for Stage 5)
 1. **Strict vendor opposition:** Any `gemini-*` builder MUST be reviewed by a `claude-*` / `claude-sub/*` critic (`claude-opus-5-5-high` or Pool 4 `claude-sub` `opus` `high`, fallback `sonnet` `high`). Any `claude-*` / `claude-sub/*` / `gpt-*` builder MUST be reviewed by a `gemini-*` critic (**`gemini-4-neon-high`** preferred; fallback `gemini-4-argon-high`).
 2. **Verify via `swarm(action="status")`:** Before marking Stage 5 done, verify from `swarm(action="status")` (and `[claude-sub receipt]` if Pool 4 was used) that the builder and critic actually ran on opposite vendors, and record both exact model IDs at the top of `.loop/<slug>/branch-review.md` (and in `EPIC.md`'s Merge Log):
-   `Builder: <exact-model-id> | Critic: <exact-model-id>`
+   `Builder: <exact-model-id> | Reviewer: <exact-model-id>`
 3. **Fail loud if `swarm` is unavailable:** Never silently downgrade a cross-family review to `invoke_subagent` or `run_workflow` (which run on the same vendor). If `swarm` is not available in the current session, stop and tell the user before merging.
 
 ### Parallel Wave Load-Balancing (2–3 Concurrent `workspace: "share"` Slices)

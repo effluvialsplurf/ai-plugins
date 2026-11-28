@@ -8,14 +8,23 @@ import re
 import sys
 from pathlib import Path
 
-# Model-family words, provider model-ID shapes (gemini-/gpt IDs; harness names like Gemini CLI stay legal), .gemini
-# install paths and plugin-root/data variables. Deliberately NOT bare "claude"/"codex": Claude-first plugins legitimately name their harness and the codex CLI. Narrower than
-# tools/test_agnostic_skills.py (SLICE-5, core lean-runbook skills), which also bans those two words.
-# INV-9 (no version probes) is enforced for the core skills by SLICE-5's test, not here; build-loop is out of its scope.
+# Model-family words, provider model-ID shapes (harness names like Gemini CLI stay legal), .gemini install paths,
+# and plugin-root/data variables. Bare "claude"/"codex" stay legal outside core lean-runbook (tested more strictly in
+# tools/test_agnostic_skills.py).
 FORBIDDEN = re.compile(
-    r"\.gemini\b|PLUGIN_(?:ROOT|DATA)|claude-(?:\d|opus|sonnet|haiku|fable|sub)|gpt-\w|gpt\s*\d|"
-    r"gemini-(?!cli\b)\w|gemini\s*\d|\bo[1-9]\b|\b(?:opus|sonnet|haiku|fable)\b", re.I)
-ALLOWED = re.compile(r"(?:^|/)references/(?:harness|version)-[^/]*\.md$")  # adapter paths
+    r"\.gemini\b|\b(?:CLAUDE_)?PLUGIN_(?:ROOT|DATA)\b|"
+    r"claude-(?:\d|opus|sonnet|haiku|fable|sub|instant)\b|gpt-(?!style\b)\w|gpt\s*\d|"
+    r"gemini-(?!cli\b)\w|gemini\s*\d|\bo[134](?:-(?:mini|pro|preview))?\b|"
+    r"\b(?:opus|sonnet|haiku|fable)\b|"
+    r"\b(?:deepseek-[\w.-]+|qwen[\d.-]*-[\w.-]+|llama-\d[\w.-]*|mistral-[\w.-]+|grok-\d[\w.-]*|kimi-[\w.-]+|codex-mini)\b",
+    re.I,
+)
+GUIDANCE_FORBIDDEN = re.compile(r"\bnative\s+swarm\b|workflows/", re.I)
+PROBE_RE = re.compile(r"--version|`\s*(?:which|type)\s+\S|^\s*\$\s*(?:which|type)\s+\S", re.M)
+FENCED_PROBE_RE = re.compile(r"^\s*(?:which|type)\s+[a-z0-9._-]+(?:\s|$)", re.M)
+COMMAND_V_RE = re.compile(r"\bcommand\s+-v\s+([\w-]+)")
+ALLOWED_COMMAND_V = {"lean-runbook": {"swarmctl"}, "build-loop": {"swarmctl", "codex", "kiro-cli"}}
+ALLOWED = re.compile(r"^plugins/[^/]+/skills/[^/]+/references/(?:harness|version)-[^/]+\.md$")  # strict adapter paths
 # Antigravity hooks.json is scanned; Claude-only hooks/hooks.json and .claude-plugin manifests are not text-scanned
 # (swarmctl's mcpServers legitimately uses ${CLAUDE_PLUGIN_ROOT}); manifests get the key check below instead.
 TEXT_GLOBS = ("skills/**/*.md", "agents/*.md", "templates/*.md", "rules/*.md", "hooks.json")
@@ -32,19 +41,52 @@ def _keys(node):
             yield from _keys(v)
 
 
+def _next_guidance_lines(text: str) -> list:
+    """Return (lineno, line) pairs inside `def next_guidance(...)`."""
+    lines = text.splitlines()
+    out = []
+    inside = False
+    for idx, line in enumerate(lines, 1):
+        if re.match(r"^def\s+next_guidance\b", line):
+            inside = True
+        elif inside and line and not line[0].isspace():
+            inside = False
+        if inside:
+            out.append((idx, line))
+    return out
+
+
 def scan(root: Path) -> list:
     root = Path(root)
     rel = lambda p: p.relative_to(root).as_posix()
     bad = []
     for plugin in sorted((root / "plugins").glob("*")):
+        pname = plugin.name
         for pattern in TEXT_GLOBS:
             for f in sorted(plugin.glob(pattern)):
-                if ALLOWED.search(rel(f)):
+                rpath = rel(f)
+                if ALLOWED.match(rpath):
                     continue
                 text = f.read_text()
                 for n, line in enumerate(text.splitlines(), 1):
                     for m in FORBIDDEN.finditer(line):
-                        bad.append(f"{rel(f)}:{n}: forbidden {m.group(0)!r} outside adapter paths")
+                        bad.append(f"{rpath}:{n}: forbidden {m.group(0)!r} outside adapter paths")
+                if pattern == "skills/**/*.md":
+                    for m in PROBE_RE.finditer(text):
+                        bad.append(f"{rpath}: forbidden runtime probe {m.group(0).strip()!r} (INV-9)")
+                    for blk in re.findall(r"```(?:bash|sh|shell|zsh)?\n(.*?)```", text, re.S):
+                        for m in FENCED_PROBE_RE.finditer(blk):
+                            bad.append(f"{rpath}: forbidden runtime probe {m.group(0).strip()!r} (INV-9)")
+                    ok_bins = ALLOWED_COMMAND_V.get(pname, {"swarmctl"})
+                    for m in COMMAND_V_RE.finditer(text):
+                        if m.group(1) not in ok_bins:
+                            bad.append(f"{rpath}: forbidden runtime probe 'command -v {m.group(1)}' (INV-9)")
+        for f in sorted(plugin.glob("skills/*/scripts/*.py")):
+            rpath = rel(f)
+            for n, line in _next_guidance_lines(f.read_text()):
+                for rx in (FORBIDDEN, GUIDANCE_FORBIDDEN):
+                    for m in rx.finditer(line):
+                        bad.append(f"{rpath}:{n}: forbidden {m.group(0)!r} in next_guidance()")
         for f in sorted(plugin.glob("agents/*.md")):
             fm = re.match(r"---\n(.*?\n)?---", f.read_text(), re.S)
             models = re.findall(r"^model:\s*(.*?)\s*$", fm.group(1) or "", re.M) if fm else []

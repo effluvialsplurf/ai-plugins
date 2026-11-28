@@ -9,7 +9,7 @@ Runs TWO fresh-context Goldfish reviewers in parallel with ZERO prior drafting h
 
 Note: When orchestrating from a main chat on Gemini Models, prefer spawning two read-only `swarm` workers
 (`goldfish-clarity` on `gemini-3.8-flash-medium` + `goldfish-critic` on `gemini-4-argon-medium` or
-`claude-opus-5-5-medium`) per `references/quota-routing.md` to balance across all 3 quota pools.
+`claude-opus-5-5-medium`) per `references/harness-antigravity.md` to balance across all 3 quota pools.
 
 Args expected (pass via run_workflow Args dict):
   slug:              Feature slug (e.g. "example-feature")

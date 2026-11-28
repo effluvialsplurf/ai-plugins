@@ -25,7 +25,7 @@ Five technical boundaries prevent 100% zero-edit portability across every coding
 1. **Lifecycle hook protocols & override gates differ per harness.**
    - Claude Code uses `SessionStart` / `UserPromptSubmit` / `PreToolUse` (`permissionDecision`, `additionalContext`).
    - Antigravity 2.0 uses `SessionStart` / `PreToolUse` (`injectSteps`, `decision: "allow" | "deny" | "force_ask"`, camelCase `toolCall.args`).
-   - Harnesses without tool-call hooks (or with different schemas) must convert the Spec Gate into their native hook format or a portable `.git/hooks/pre-commit` check calling `runbook.py status`.
+   - Harnesses without tool-call hooks (or with different schemas) can use the built-in portable `.git/hooks/pre-commit` check calling `lean-runbook pre-commit` (or `runbook.py pre-commit`).
 2. **Multi-agent dispatch & git worktree isolation have no universal tool API.**
    - Claude Code uses the `Agent` tool + `.claude-plugin` agent markdown files.
    - Antigravity 2.0 uses native `swarm(action="add", model=..., workspace="share")` and `run_workflow`.
@@ -78,4 +78,4 @@ If you only have access to **one** model family (or one local model), every plug
 | **Cursor** | `.cursor/skills/` or `~/.cursor/skills/` | `.cursor/rules/*.mdc` / `AGENTS.md` | Subagents / fresh Composer tabs | Cursor hooks or `.git/hooks/pre-commit` |
 | **Windsurf** | `.windsurf/skills/` or `~/.agents/skills/` | `.windsurfrules` / `AGENTS.md` | Fresh Cascade sessions | Instruction gate + `.git/hooks/pre-commit` |
 | **Kiro** | `~/.kiro/skills/` or `.kiro/steering/` | `.kiro/steering/*.md` | `kiro-cli chat --no-interactive` | Kiro hooks or `.git/hooks/pre-commit` |
-| **Cline / Roo Code / Aider / Other** | `~/.agents/skills/` (or repo `.agents/skills/`) | `.clinerules` / `AGENTS.md` / `CONVENTIONS.md` | Fresh sessions or CLI calls per brief file | `.git/hooks/pre-commit` calling `runbook.py` |
+| **Cline / Roo Code / Aider / Other** | `~/.agents/skills/` (or repo `.agents/skills/`) | `.clinerules` / `AGENTS.md` / `CONVENTIONS.md` | Fresh sessions or CLI calls per brief file | `.git/hooks/pre-commit` calling `lean-runbook pre-commit` |

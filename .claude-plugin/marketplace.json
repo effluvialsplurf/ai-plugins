@@ -15,7 +15,7 @@
     },
     {
       "name": "build-loop",
-      "description": "Run a planned feature end to end with agents (plan, plan check, build, review, PR) in three versions by the tools you have, plus the context and cache cost lessons as their own skill.",
+      "description": "Run a planned feature end to end with agents (plan, plan check, build, review, PR) with Claude, Kiro, Codex, and custom/agnostic harness adapters, plus the context and cache cost lessons as their own skill.",
       "source": "./plugins/build-loop",
       "category": "development"
     },

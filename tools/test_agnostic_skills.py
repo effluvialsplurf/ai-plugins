@@ -46,6 +46,17 @@ class AgnosticSkillTests(unittest.TestCase):
             self.assertTrue(text)
             self.assertIsNone(FORBIDDEN.search(text), (i, text))
             self.assertNotIn("workflows/", text, (i, text))
+        # Also verify design_check.py::next_guidance() across every design stage
+        dc_path = LR / "skills/lean-design/scripts/design_check.py"
+        spec = importlib.util.spec_from_file_location("design_check_under_test", dc_path)
+        dc = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = dc
+        spec.loader.exec_module(dc)
+        for i in range(len(dc.STAGES) + 1):
+            text = dc.next_guidance({"slug": "s", "done": list(dc.STAGES[:i])})
+            self.assertTrue(text)
+            self.assertIsNone(FORBIDDEN.search(text), (i, text))
+            self.assertNotIn("native swarm", text.lower(), (i, text))
 
     def test_skill_names_five_roles_and_four_tier_ladder(self):
         text = (LR / "skills/lean-runbook/SKILL.md").read_text()
@@ -111,7 +122,9 @@ class AgnosticSkillTests(unittest.TestCase):
             text = f.read_text()
             for var in set(re.findall(r"\b[A-Z][A-Z_]*_DATA\b", text)):
                 self.assertIn(var, src, var)
-            for cmd in set(re.findall(r"`(?:lean-runbook|lean-design) (start|status|done|skip|finish|init|check)\b", text)):
+            cmds = set(re.findall(r"`(?:lean-runbook|lean-design) (start|status|done|skip|finish|init|check)\b", text))
+            self.assertTrue(cmds, f"expected shim commands in {f.relative_to(ROOT)}")
+            for cmd in cmds:
                 self.assertIn(f'"{cmd}"', src, cmd)
         self.assertTrue((LR / "bin/lean-runbook").is_file() and (LR / "bin/lean-design").is_file())
 

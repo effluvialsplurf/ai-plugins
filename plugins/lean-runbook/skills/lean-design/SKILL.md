@@ -48,11 +48,11 @@ of the reader-facing suite.
 
 | # | Stage | Seat (role) | Output | Exit Gate |
 |---|---|---|---|---|
-| 0 | **Intake & Recon** | Thin `orchestrator` + read-only `design-scout` (`explorer`) | Mode (`greenfield` \| `redesign`), tier (`standard` \| `complex`), `.loop/designs/<slug>/recon.md` (≤120 lines) | `design_check.py init <slug> ...` |
-| 1 | **Elephant Interrogation** | Main chat (`orchestrator` + user) | `.loop/designs/<slug>/brief.md` (≤100 lines, locked rulings) | User confirms brief rulings → `design_check.py done brief <slug>` |
-| 2 | **Budgeted 3-Doc Draft** | `design-drafter` (`planner`; strong model, read-only on codebase, writes only `docs/designs/<slug>/`) | `design.md`, `tech-plan.md`, `spec.md` | `design_check.py check docs/designs/<slug>` passes (budget + ID traceability + anti-bloat) → `done draft` |
+| 0 | **Intake & Recon** | Thin `orchestrator` + read-only `design-scout` (`explorer`) | Mode (`greenfield` \| `redesign`), tier (`standard` \| `complex`), `.loop/designs/<slug>/recon.md` (≤120 lines) | `lean-design init <slug> ...` |
+| 1 | **Elephant Interrogation** | Main chat (`orchestrator` + user) | `.loop/designs/<slug>/brief.md` (≤100 lines, locked rulings) | User confirms brief rulings → `lean-design done brief <slug>` |
+| 2 | **Budgeted 3-Doc Draft** | `design-drafter` (`planner`; strong model, read-only on codebase, writes only `docs/designs/<slug>/`) | `design.md`, `tech-plan.md`, `spec.md` | `lean-design check docs/designs/<slug>` passes (budget + ID traceability + anti-bloat) → `done draft` |
 | 3 | **3-Lens Cross-Vendor Goldfish Review** | 3 parallel fresh-context read-only `reviewer` critics (see [references/goldfish-review.md](./references/goldfish-review.md)) | `.loop/designs/<slug>/goldfish-report.md` (≤180 lines, with model receipt) | All 3 lenses complete + consolidated → `done review` |
-| 4 | **Resolve, Compress & Handoff** | Main chat (user decisions) + `design-drafter` (compression pass) | Approved 3-doc suite + Reader & `lean-runbook` Handoff Card | `design_check.py check docs/designs/<slug> --strict` exits 0 + user approves → `done resolve` |
+| 4 | **Resolve, Compress & Handoff** | Main chat (user decisions) + `design-drafter` (compression pass) | Approved 3-doc suite + Reader & `lean-runbook` Handoff Card | `lean-design check docs/designs/<slug> --strict` exits 0 + user approves → `done resolve` |
 | 5 | **Drift Report (Optional, Post-Build)** | `drift-auditor` (`explorer`; read-only) | `docs/designs/<slug>/drift-report.md` (≤150 lines) | Compares merged code/epic against `BR-*`, `RISK-*`, `ADR-*`, `INV-*` |
 
 ---
@@ -66,7 +66,7 @@ of the reader-facing suite.
    - **Greenfield Mode (`--mode greenfield`):** New project/feature with no rejected predecessor plan.
    - **Budget Tier:** Default to **`standard` (15–20 min / ≤4,000 words)**. Use **`--complex` (≤60 min / ≤10,500 words)** *only* when the project is a multi-subsystem platform rearchitecture that genuinely cannot fit in 20 minutes without dropping critical contracts.
 3. **Initialize & Scout cheaply:**
-   - Run `design_check.py init <slug> --mode <greenfield|redesign> [--complex]` (scaffolds templates under `docs/designs/<slug>/` and initializes tracker state).
+   - Run `lean-design init <slug> --mode <greenfield|redesign> [--complex]` (scaffolds templates under `docs/designs/<slug>/` and initializes tracker state).
    - Dispatch `design-scout` (`explorer`, read-only) to read any input doc(s) and relevant repo areas and return `.loop/designs/<slug>/recon.md` (**≤120 lines**):
      - Existing system facts (verified file/symbol paths, tech stack, hard constraints)
      - *(Redesign mode)* Extracted **True Business Requirements** vs **Legacy Assumptions / Risks / Failure Modes** in the input plan (separating what the business actually needs from *how* the rejected plan accidentally created risk).
@@ -77,7 +77,7 @@ of the reader-facing suite.
   2. **Risk Elimination Bar** *(Redesign mode)*: confirm the top `RISK-*` failure modes from the input plan and what *structural* property eliminates each (e.g., removing distributed state, replacing sync coupling with idempotent events, eliminating a whole tier).
   3. **Hard Constraints & Cutover Appetite**: downtime/migration tolerance, backward compatibility, team/infra boundaries, and project quiet gate command (if known).
   4. **Target `lean-runbook` Execution Shape**: confirm whether this will execute as a Single Slice, Mini-Series (2–4 slices), or Epic (>4 slices).
-- Record locked answers in `.loop/designs/<slug>/brief.md` using [templates/brief.md](./templates/brief.md) (**≤100 lines**), get quick user confirmation, and mark `design_check.py done brief <slug>`.
+- Record locked answers in `.loop/designs/<slug>/brief.md` using [templates/brief.md](./templates/brief.md) (**≤100 lines**), get quick user confirmation, and mark `lean-design done brief <slug>`.
 
 ### Stage 2: Budgeted 3-Doc Drafting (Zero Duplication)
 - Dispatch `design-drafter` (`planner` role, strong model) through your dispatch tier, preferably a different model family from the Stage 3 `goldfish-architect`.
@@ -87,7 +87,7 @@ of the reader-facing suite.
   3. **Contracts, Not Code:** Show typed schemas, API/event signatures, and state transitions only. Never paste full implementations or >20-line code blocks.
   4. **Structural Risk Elimination *(Redesign mode)*:** Every `RISK-*` must name the *old mechanism* causing the risk and the *new structural property* that makes the failure mode impossible or strictly bounded. "We will be careful / add monitoring" is forbidden as a primary elimination.
   5. **Executable `lean-runbook` Slices:** Every `SLICE-*` in `spec.md` MUST obey `lean-runbook`'s `≤3 commits / ≤600 LOC` vertical-slice ceiling, specify exact touched boundaries, dependencies, Shared Contracts published/consumed, and concrete acceptance checks (`CUJ-*`). Read [references/lean-runbook-handoff.md](./references/lean-runbook-handoff.md).
-  6. **Verify Before Handing Back:** `design-drafter` MUST run `design_check.py check docs/designs/<slug>` and fix any budget overshoot, duplicate prose, large code block, or orphan `BR-*`/`RISK-*`/`INV-*` ID before reporting done.
+  6. **Verify Before Handing Back:** `design-drafter` MUST run `lean-design check docs/designs/<slug>` and fix any budget overshoot, duplicate prose, large code block, or orphan `BR-*`/`RISK-*`/`INV-*` ID before reporting done.
 
 ### Stage 3: 3-Lens Fresh-Context Goldfish Review (Cross-Vendor)
 Read [references/goldfish-review.md](./references/goldfish-review.md) and launch **3 parallel fresh-context read-only `reviewer` critics**:
@@ -101,8 +101,8 @@ Consolidate findings into `.loop/designs/<slug>/goldfish-report.md` (**≤180 li
 ### Stage 4: Interactive Resolve, Net-Zero Compression & Handoff
 1. Present **only real Blockers and Architectural Tradeoffs** to the user (grouped cleanly; auto-resolve obvious typos, broken cross-references, and redundant prose).
 2. Send approved resolutions + `goldfish-clarity`'s bloat cuts back to `design-drafter` with the **Net-Zero Bloat Rule**: every word added to clarify a finding must be offset by tightening prose or converting paragraphs to table rows so total read time stays within budget.
-3. Run `design_check.py check docs/designs/<slug> --strict` — must exit `0`.
-4. Mark every document's header `Status: Approved`, run `design_check.py done resolve <slug>`, retire `design-drafter` and `design-scout`, and present the **Handoff Summary**:
+3. Run `lean-design check docs/designs/<slug> --strict` — must exit `0`.
+4. Mark every document's header `Status: Approved`, run `lean-design done resolve <slug>`, retire `design-drafter` and `design-scout`, and present the **Handoff Summary**:
    - Per-doc word count, line count, and estimated read time + total suite read time
    - Clickable `file://` links to `design.md`, `tech-plan.md`, and `spec.md`
    - Exact one-line prompt to launch `lean-runbook` (Single Slice, Mini-Series, or Epic Mode) from `docs/designs/<slug>/spec.md` (see [references/lean-runbook-handoff.md](./references/lean-runbook-handoff.md)).
@@ -113,7 +113,7 @@ When the user asks for a drift check after `lean-runbook` lands slices, follow t
 ---
 
 ## Quick Commands
-- Init design suite: `design_check.py init <slug> [--mode greenfield|redesign] [--complex]`
-- Validate budget, bloat & traceability: `design_check.py check docs/designs/<slug> [--complex] [--strict]`
-- Check workflow status: `design_check.py status [<slug>]`
-- Mark stage done: `design_check.py done <brief|draft|review|resolve|drift> <slug>`
+- Init design suite: `lean-design init <slug> [--mode greenfield|redesign] [--complex]`
+- Validate budget, bloat & traceability: `lean-design check docs/designs/<slug> [--complex] [--strict]`
+- Check workflow status: `lean-design status [<slug>]`
+- Mark stage done: `lean-design done <brief|draft|review|resolve|drift> <slug>`

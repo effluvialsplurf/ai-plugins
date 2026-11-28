@@ -880,7 +880,7 @@ class TestCli(unittest.TestCase):
         scripts_root = Path(__file__).resolve().parents[1]
         bin_path = scripts_root / "bin" / "swarmctl"
 
-        # 1. python3 -m swarmctl models --json succeeds with PYTHONPATH=claude/swarmctl/scripts
+        # 1. python3 -m swarmctl models --json succeeds with PYTHONPATH=plugins/swarmctl/scripts
         mod_env = {**os.environ, "PYTHONPATH": str(scripts_root)}
         res_mod = subprocess.run(
             [sys.executable, "-m", "swarmctl", "models", "--json"],

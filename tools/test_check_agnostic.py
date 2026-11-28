@@ -115,6 +115,33 @@ class TestCheckAgnostic(Fixture):
         hits = check_agnostic.scan(self.root)
         self.assertEqual(sorted(h.split(":")[0] for h in hits), ["plugins/p/agents/last.md", "plugins/p/agents/late.md"])
 
+    def test_anchored_allowlist_multi_plugin_open_weights_and_false_positive_guards(self):
+        # Nested spoofed references/harness-evil.md and non-adapter references/other.md MUST fail
+        self.write("plugins/p/skills/s/sub/references/harness-evil.md", "claude-opus-5-5\n")
+        self.write("plugins/q/skills/s/references/other.md", "deepseek-r1 qwen3-coder llama-4 mistral-large grok-3 kimi-k2 codex-mini claude-instant\n")
+        self.write("plugins/q/plugin.json", json.dumps({"name": "q", "dependencies": ["x"]}))
+        hits = check_agnostic.scan(self.root)
+        files = {h.split(":")[0] for h in hits}
+        self.assertEqual(files, {
+            "plugins/p/skills/s/sub/references/harness-evil.md",
+            "plugins/q/skills/s/references/other.md",
+            "plugins/q/plugin.json",
+        }, hits)
+        # Ordinary prose/flags must NOT trigger false positives
+        self.write("plugins/p/skills/s/sub/references/harness-evil.md", "clean\n")
+        self.write("plugins/q/skills/s/references/other.md", "compile with -O2, gpt-style prompt, LEAN_PLUGIN_DATABASE\n")
+        self.write("plugins/q/plugin.json", json.dumps({"name": "q"}))
+        self.assertEqual(check_agnostic.scan(self.root), [])
+
+    def test_next_guidance_and_inv9_runtime_probes_are_enforced(self):
+        self.write("plugins/p/skills/s/scripts/runbook.py",
+                   'def next_guidance(state):\n    return "run via native swarm drafter with claude-opus-5-5"\n')
+        self.write("plugins/p/skills/s/SKILL.md", "run `foo --version` and `command -v bogus`\n")
+        hits = check_agnostic.scan(self.root)
+        self.assertTrue(any("next_guidance()" in h for h in hits), hits)
+        self.assertTrue(any("INV-9" in h and "--version" in h for h in hits), hits)
+        self.assertTrue(any("INV-9" in h and "bogus" in h for h in hits), hits)
+
 
 if __name__ == "__main__":
     unittest.main()

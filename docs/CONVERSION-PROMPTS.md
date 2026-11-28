@@ -17,8 +17,8 @@ agent to convert the plugin cleanly, preserve all core safety invariants, and ve
    cd ~/Projects/ai-plugins
    ```
 2. Check [`docs/PORTABILITY.md`](./PORTABILITY.md):
-   - If you only need **`deep-review`**, **`receiving-deep-review`**, **`context-costs`**, or the standalone **`design_check.py` / `runbook.py` CLI & templates**, you can install the skills directly with `./install.sh --skills <your-skills-dir>` (note that `lean-design` and `lean-runbook` `SKILL.md` prose still references Antigravity `swarm` and `~/.gemini/config/plugins/` paths until converted).
-   - If you want the full **`lean-runbook`**, **`lean-design`**, **`build-loop`**, or **`egm-runbook`** workflow natively on another harness/model family, create a branch (e.g., `git checkout -b port/<your-harness>` — note `converted/` is untracked unless you add it to `.gitignore` or commit on your port branch) and run the appropriate prompt below.
+   - Core skills (`deep-review`, `receiving-deep-review`, `context-costs`, `lean-design`, `lean-runbook`, `swarmctl`) and CLI shims (`lean-runbook`, `lean-design`, `swarmctl`) are already harness-agnostic and install directly via `./install.sh --skills <your-skills-dir>` (and natively in both Claude Code and Antigravity 2.0 via `./install.sh`).
+   - If you want custom native hooks, IDE rules, or model-seat adapters for another harness/model family, create a branch (e.g., `git checkout -b port/<your-harness>` — note `converted/` is untracked unless you add it to `.gitignore` or commit on your port branch) and run the appropriate prompt below.
 3. Install the converted output into your harness's plugin or skills directory (see [README.md](../README.md#installation)).
 
 ## Shared Conversion Invariants (Apply to All Prompts Below)
@@ -33,22 +33,21 @@ Every conversion prompt below MUST preserve these invariants (include or cite th
 
 ## Prompt 1: Convert for OpenAI / GPT / Codex CLI
 
-Use this prompt in **Codex CLI** (or any OpenAI/GPT coding harness) to adapt `antigravity/lean-runbook`
-and/or `claude/build-loop` + `claude/egm-runbook` for OpenAI GPT models and Codex CLI.
+Use this prompt in **Codex CLI** (or any OpenAI/GPT coding harness) to adapt `plugins/lean-runbook`
+and/or `plugins/build-loop` for OpenAI GPT models and Codex CLI.
 
 ```text
 You are converting workflow plugins in this `ai-plugins` repository for **Codex CLI** and the **OpenAI / GPT model family**.
 
 Target plugins to convert (edit a new copy under `converted/codex/` so originals stay intact):
-- `antigravity/lean-runbook` (`lean-design` + `lean-runbook` skills, scripts, templates)
-- `claude/build-loop` (`build-loop` + `context-costs` skills, templates, scripts)
-- (Optional, if requested) `claude/egm-runbook`
+- `plugins/lean-runbook` (`lean-design` + `lean-runbook` skills, scripts, templates)
+- `plugins/build-loop` (`build-loop` + `context-costs` skills, templates, scripts)
 
 Follow these conversion rules strictly:
 1. **Inspect first:** Read `docs/PORTABILITY.md`, the "Shared Conversion Invariants" in `docs/CONVERSION-PROMPTS.md`, and the target plugin's `SKILL.md`, `references/`, `scripts/`, `hooks.json`, and `templates/`.
 2. **Replace harness-specific orchestration:**
-   - Replace Antigravity `swarm(action=...)`, `run_workflow`, `swarm_pane`, `/teamwork` warnings, and Claude Code `Agent` tool calls with Codex CLI native subagents OR headless `codex exec` calls (`codex --search exec -m <model> -c model_reasoning_effort=<effort> ... < /dev/null`).
-   - Keep `claude/build-loop/scripts/codex-review.sh` and `codex-usage.sh` working; update default `CODEX_MODEL` (currently `gpt-6-astra`) / `CODEX_EFFORT` to match my current Codex CLI, and note that `codex-review.sh` requires a file-based auth token at `~/.codex/auth.json` (or `CODEX_AUTH_FILE`, not OS keyring-only auth).
+   - Replace harness adapter references with Codex CLI native subagents, `swarmctl`, OR headless `codex exec` calls (`codex --search exec -m <model> -c model_reasoning_effort=<effort> ... < /dev/null`).
+   - Keep `plugins/build-loop/scripts/codex-review.sh` and `codex-usage.sh` working; update default `CODEX_MODEL` / `CODEX_EFFORT` to match my current Codex CLI, and note that `codex-review.sh` requires a file-based auth token at `~/.codex/auth.json` (or `CODEX_AUTH_FILE`, not OS keyring-only auth).
    - Replace `${CLAUDE_PLUGIN_ROOT}` and `~/.gemini/config/plugins/lean-runbook/...` with `~/.codex/skills/<skill-name>/...` (or a configurable `AI_PLUGINS_DIR` env var), rewrite Antigravity-specific `next_guidance()` strings in `runbook.py` / `design_check.py`, and update sample model cells in `templates/epic-ledger.md` and Claude/Kiro wording in `build-loop/templates/{implementer-contract,fixer-brief,dispatch}.md`.
    - Replace references to `CLAUDE.md` with `AGENTS.md`, and remove hard requirements on Claude's `superpowers:*` or `/egm:*` skills (keep `lean-design` as the self-contained design workflow).
 3. **Remap model seats to the OpenAI / GPT family:**
@@ -74,16 +73,16 @@ Follow these conversion rules strictly:
 ## Prompt 2: Convert for Google Gemini / Gemini CLI (Non-Antigravity)
 
 Use this prompt in **Gemini CLI** (or any Gemini-powered harness outside Antigravity 2.0) to adapt
-`antigravity/lean-runbook` and/or `claude/build-loop` so they run cleanly without Antigravity's
+`plugins/lean-runbook` and/or `plugins/build-loop` so they run cleanly without Antigravity's
 proprietary `swarm`, `run_workflow`, or 3-pool quota tools.
 
 ```text
 You are converting workflow plugins in this `ai-plugins` repository for **Gemini CLI** and the **Google Gemini model family** (outside Antigravity 2.0).
 
 Target plugins to convert (write the converted output under `converted/gemini-cli/` so originals stay intact):
-- `antigravity/lean-runbook` (`lean-design` + `lean-runbook`)
-- `claude/build-loop` (`build-loop` + `context-costs`)
-- `claude/deep-review` (verify fallback paths work smoothly in Gemini CLI)
+- `plugins/lean-runbook` (`lean-design` + `lean-runbook`)
+- `plugins/build-loop` (`build-loop` + `context-costs`)
+- `plugins/deep-review` (verify fallback paths work smoothly in Gemini CLI)
 
 Follow these conversion rules strictly:
 1. **Inspect first:** Read `docs/PORTABILITY.md`, the "Shared Conversion Invariants" in `docs/CONVERSION-PROMPTS.md`, and the target `SKILL.md` files, `references/`, `scripts/`, `hooks.json`, `templates/`, and `workflows/`.
@@ -102,7 +101,7 @@ Follow these conversion rules strictly:
        - Otherwise, use a fresh zero-history Gemini Pro session AND enable the Single-Vendor Compensation checklist from `docs/PORTABILITY.md` (boundary-input tables, invariant helpers, Tier-2 mutation checks, `.loop/ESCAPES.md`).
 4. **Convert hooks & Spec Gate for Gemini CLI (following Shared Conversion Invariants):**
    - Keep `design_check.py` and `runbook.py` CLI subcommands intact (already pure Python 3.9+ stdlib).
-   - Convert `hooks.json` and `runbook.py hook-*` to Gemini CLI's hook event schema (if supported by my installed Gemini CLI version, preserving fail-open behavior, `CODE_EXTENSIONS`/`CODE_BASENAMES`, no self-opening of the gate, and the 300-line guard), OR provide a portable git `pre-commit` gate script (`scripts/install-git-gate.sh`) + `GEMINI.md` gate rules (explicitly noting the `--no-verify` gap).
+   - Convert `hooks.json` / `hooks/hooks.json` and `runbook.py hook` to Gemini CLI's hook event schema (if supported by my installed Gemini CLI version, preserving fail-open behavior, `CODE_EXTENSIONS`/`CODE_BASENAMES`, no self-opening of the gate, and the 300-line guard), OR wire the built-in `lean-runbook pre-commit` into `.git/hooks/pre-commit` + `GEMINI.md` gate rules (explicitly noting the `--no-verify` gap).
 5. **Adapt `context-costs` for Gemini:**
    - Keep Rules 1-12 intact; replace Claude's 5m/1h prompt-cache notes and `~/.claude/projects/` script instructions with Gemini context-caching guidance and Gemini CLI session/token tracking.
 6. **Verify before finishing:**
@@ -112,44 +111,17 @@ Follow these conversion rules strictly:
 
 ---
 
-## Prompt 3: Convert Antigravity `lean-runbook` & `lean-design` for Anthropic Claude / Claude Code
+## Prompt 3: Anthropic Claude / Claude Code (Already Native)
 
-Use this prompt in **Claude Code** if you want to run Antigravity's **`lean-design`** (the 15–20 min
-3-doc EGM replacement) and **`lean-runbook`** (5-stage vertical-slice TDD loop) as a **native
-Claude Code plugin** instead of the heavier `egm-runbook` + `egm@egm` setup.
+`plugins/lean-runbook` (`lean-design` + `lean-runbook`), `plugins/deep-review`, `plugins/build-loop`, and `plugins/swarmctl` already ship natively for Claude Code with `.claude-plugin/plugin.json`, `hooks/hooks.json`, and `model: inherit` agents — no conversion prompt is needed. Install directly via:
 
 ```text
-You are porting `antigravity/lean-runbook` (both `lean-design` and `lean-runbook` skills) into a native **Claude Code** plugin under `claude/lean-runbook/`.
-
-Follow these conversion rules strictly:
-1. **Inspect both sides first:**
-   - Read `antigravity/lean-runbook/` in full (`plugin.json`, `hooks.json`, `skills/lean-design/`, `skills/lean-runbook/`).
-   - Read `claude/egm-runbook/hooks/hooks.json`, `claude/egm-runbook/scripts/runbook.py`, and `claude/build-loop/agents/*.md` as canonical references for Claude Code's exact manifest, hook schema, `!` override model, and agent frontmatter.
-2. **Create a valid Claude Code plugin structure under `claude/lean-runbook/`:**
-   - Add `.claude-plugin/plugin.json` (valid against Claude Code plugin schema; no hard dependency on `egm@egm`).
-   - Add lean Claude Code agent definitions in `claude/lean-runbook/agents/`:
-     - `scout.md` (fast read-only model — e.g., current Claude Haiku or Sonnet, minimal tools: `Read, Grep, Glob, Bash`)
-     - `drafter.md` (Claude Sonnet/Opus, writes only `docs/designs/<slug>/`)
-     - `planner.md` (Claude Opus, read-only except `.loop/<slug>/plan.md`)
-     - `builder.md` (Claude Sonnet, TDD implementation + quiet gate)
-     - `critic.md` (fresh read-only Claude Opus, `Read, Grep, Glob, Bash`, adversarial review; plus optional `codex-review.sh` / `gemini` CLI cross-vendor path if installed)
-   - Pin exact current Claude model IDs available in my Claude Code environment.
-3. **Translate `hooks.json` and `runbook.py` hook handlers from Antigravity to Claude Code:**
-   - Replace Antigravity's hook JSON (`injectSteps`, `decision: "force_ask"`, `toolCall.args.Path`/`CommandLine`) with Claude Code's hook schema (`SessionStart`, `UserPromptSubmit`, `PreToolUse` on `Write|Edit|MultiEdit|NotebookEdit|Skill|Bash`, outputting `hookSpecificOutput` with `permissionDecision` and `additionalContext`).
-   - Choose the gate-opening model cleanly:
-     - Use `permissionDecision: "ask"` as the direct Claude Code equivalent to Antigravity's `force_ask` (for the >320-line spec/plan budget warning and gate-opening confirmation), OR
-     - Use Claude Code's stricter `egm-runbook` pattern (`permissionDecision: "deny"` on agent Bash attempts to run `done goldfish`, `skip gate`, `start ... --force`, or tamper with `${CLAUDE_PLUGIN_DATA}`, printing the exact `! python3 "${CLAUDE_PLUGIN_ROOT}/scripts/runbook.py" ...` user-shell override command).
-   - Keep `runbook.py` CLI subcommands (`start`, `status`, `done`, `skip`, `finish`, `--epic`, `--cwd`) and `design_check.py` intact, honoring `${CLAUDE_PLUGIN_DATA}` / `${CLAUDE_PLUGIN_ROOT}`, and rewrite Antigravity-specific `next_guidance()` strings + `templates/epic-ledger.md` model cells.
-4. **Replace Antigravity orchestration in `SKILL.md` and `references/`:**
-   - Replace `swarm(action="add", ...)` with Claude Code `Agent` calls targeting `lean-runbook:scout`, `drafter`, `planner`, `builder`, `critic` (use `git worktree add` for parallel Epic slices instead of `workspace: "share"`).
-   - Remove Antigravity-only `workflows/build_loop.py`, `workflows/goldfish_gate.py` (`run_workflow`), `swarm_pane`, `/teamwork`, and `rules/AGENTS.md` 3-pool rules.
-   - Cross-link `build-loop:context-costs` and `claude/build-loop/scripts/codex-review.sh` (optional cross-vendor critic) so Stage 2/3/5 can use Codex if installed, or fresh Opus + Single-Vendor Compensation if Claude-only.
-5. **Wire repo registration & verify before finishing:**
-   - Register `claude/lean-runbook` in `.claude-plugin/marketplace.json` and in `install.sh`'s `install_claude()` / `uninstall_claude()` plugin list (do NOT create a duplicate skill name collision in `install.sh`'s `SKILL_CATALOG` with `antigravity/lean-runbook`).
-   - Write/update unit tests covering both CLI subcommands and the new Claude Code hook handlers.
-   - Run all unit tests (`python3 -m unittest discover ...`) and validate the plugin manifest (`claude plugin validate .` if `claude` CLI is installed).
-   - Document how to install via `claude --plugin-dir claude/lean-runbook` or `/plugin install lean-runbook@ai-plugins`.
+/plugin marketplace add effluvialsplurf/ai-plugins
+/plugin install lean-runbook@ai-plugins
+/plugin install swarmctl@ai-plugins
 ```
+
+Or from a local clone: `./install.sh --claude` (which also installs the `lean-runbook`, `lean-design`, and `swarmctl` CLI shims into `~/.local/bin`).
 
 ---
 
@@ -172,9 +144,9 @@ My environment:
   - Second-family Critic model (optional, "none" if single model): <e.g., different open-weights family or API model>
 
 Target plugins to convert (write output under `converted/open-weights/` so originals stay intact):
-- `antigravity/lean-runbook` (`lean-design` + `lean-runbook`)
-- `claude/build-loop` (`build-loop` + `context-costs`)
-- `claude/deep-review` (verify it runs cleanly with my harness)
+- `plugins/lean-runbook` (`lean-design` + `lean-runbook`)
+- `plugins/build-loop` (`build-loop` + `context-costs`)
+- `plugins/deep-review` (verify it runs cleanly with my harness)
 
 Follow these conversion rules strictly (preserving all "Shared Conversion Invariants" from the top of `docs/CONVERSION-PROMPTS.md`):
 1. **Remove all proprietary vendor & harness lock-in:**
@@ -209,7 +181,7 @@ My primary model(s):
 - Strongest Planner/Critic model: <model>
 - Optional Second-Vendor Critic model: <model or "none">
 
-Plugins I want to use: <deep-review | lean-design | lean-runbook | build-loop | egm-runbook>
+Plugins I want to use: <deep-review | lean-design | lean-runbook | build-loop | swarmctl>
 
 Follow these conversion rules (preserving all "Shared Conversion Invariants" from the top of `docs/CONVERSION-PROMPTS.md`, including `lean-design`'s 15–20m/60m budgets, `lean-runbook`'s ≤300-line and ≤3-commit/≤600-LOC caps, and fresh-context Goldfish review):
 1. **Inspect `docs/PORTABILITY.md`** and the selected plugin(s) in this repo.
@@ -249,7 +221,7 @@ You are adapting plugins from the `ai-plugins` repository to a custom harness an
   - Planner / Drafter: {{PLANNER_MODEL}}
   - Builder / Fixer: {{BUILDER_MODEL}}
   - Adversarial Critic (different vendor preferred): {{CRITIC_MODEL}}
-- **Plugins to Convert:** {{PLUGINS}} (e.g., deep-review, lean-design, lean-runbook, build-loop, egm-runbook)
+- **Plugins to Convert:** {{PLUGINS}} (e.g., deep-review, lean-design, lean-runbook, build-loop, swarmctl)
 - **Target Skills / Rules Directory:** {{SKILLS_DIR}}
 - **Persistent Instructions File:** {{RULES_FILE}} (e.g., AGENTS.md)
 - **Subagent Mechanism:** {{SUBAGENT_MECHANISM}} (e.g., native subagent tool / CLI command `<cmd>` / sequential fresh sessions)

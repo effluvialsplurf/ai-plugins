@@ -4,7 +4,7 @@ This playbook replaces `/egm:egm-review` and `/egm:egm-resolve`. Every Goldfish 
 read-only worker** with **zero prior conversation history** (never fork the main context) so it
 experiences the 3-doc suite exactly like a cold human engineer reading it for the first time.
 
-> **Prerequisite:** `design_check.py check docs/designs/<slug>` MUST pass before launching Goldfish.
+> **Prerequisite:** `lean-design check docs/designs/<slug>` MUST pass before launching Goldfish.
 > Never waste critic tokens reviewing a bloated draft with broken IDs.
 
 ---
@@ -91,5 +91,5 @@ Reply to the coordinator in <=50 lines grouped into: `BLOCKER` (missing traceabi
    - **`Deferred / Rejected`** (1-line rationale)
 2. Retire all 3 critics immediately (`goldfish-clarity`, `goldfish-architect`, `goldfish-handoff`).
 3. Send the user's rulings + approved fixes + bloat cuts to `design-drafter` with the **Net-Zero Bloat Rule**:
-   - *"Apply every approved resolution AND every `DUPLICATION` / `CUT/TIGHTEN` fix. Do not grow total word count above the tier budget. Run `design_check.py check docs/designs/<slug> --strict` and report the final read-time table."*
+   - *"Apply every approved resolution AND every `DUPLICATION` / `CUT/TIGHTEN` fix. Do not grow total word count above the tier budget. Run `lean-design check docs/designs/<slug> --strict` and report the final read-time table."*
 4. If a major architectural pivot occurred during Resolve (e.g., an entire subsystem or migration strategy changed), run **one targeted re-check** on `goldfish-architect` for the changed section only — never an endless review loop.

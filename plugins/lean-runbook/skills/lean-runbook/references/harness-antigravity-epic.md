@@ -80,9 +80,9 @@ Your assignment:
 Follow `lean-runbook` strictly inside your worktree:
 1. Run `python3 ~/.gemini/config/plugins/lean-runbook/skills/lean-runbook/scripts/runbook.py start <slice-slug> --epic <epic-slug>`.
 2. Inspect ONLY your slice's files (do NOT edit code yet) and write `docs/specs/<slice-slug>.md` (<=300 lines, tables over prose) + `.loop/<slice-slug>/LOOP-STATE.md`.
-3. Stage 2 Goldfish Gate: Run `workflows/goldfish_gate.py` via `run_workflow` with `clarity_model: "flash"` and `adversarial_model: "inherit"` (so adversarial review stays on your assigned pool), OR verify every claimed symbol/invariant directly if `run_workflow` is unavailable.
+3. Stage 2 Goldfish Gate: Run `~/.gemini/config/plugins/lean-runbook/skills/lean-runbook/workflows/goldfish_gate.py` via `run_workflow` (absolute `ScriptPath`) with `clarity_model: "flash"` and `adversarial_model: "inherit"` (so adversarial review stays on your assigned pool), OR verify every claimed symbol/invariant directly if `run_workflow` is unavailable.
 4. **CHECKPOINT — STOP & REPORT TO @coordinator:** Post a <=12-line summary of Goldfish blockers/important findings and any design questions. Wait for `@coordinator` rulings and Spec Gate approval (`done goldfish`) before writing code.
-5. After gate opens: Write `.loop/<slice-slug>/plan.md` (<=300 lines, <=3 commits, signatures + invariants + test assertions only — NO pasted code, NO scratch dry-runs), then implement TDD commits cleanly (or run `workflows/build_loop.py` with `base_ref: "epic/<epic-slug>"`, `build_model: "inherit"`, `skip_critic: true`).
+5. After gate opens: Write `.loop/<slice-slug>/plan.md` (<=300 lines, <=3 commits, signatures + invariants + test assertions only — NO pasted code, NO scratch dry-runs), then implement TDD commits cleanly (or run `~/.gemini/config/plugins/lean-runbook/skills/lean-runbook/workflows/build_loop.py` via `run_workflow` with `base_ref: "epic/<epic-slug>"`, `build_model: "inherit"`, `skip_critic: true`).
 6. **Unforeseen Work Rule:** If you discover unexpected coupling or missing prerequisites outside your <=3-commit budget, DO NOT expand scope. Report `DISCOVERY: <1-line description>` to `@coordinator` and either pause (if blocking) or continue within scope.
 7. When `<gate_cmd>` is green and `git status` is clean, post `@coordinator: READY TO MERGE` with: branch name, commit list, gate output, new Shared Contracts added, and any `DISCOVERY:` items. Keep your worktree intact until `@coordinator` confirms merge.
 ```
@@ -108,7 +108,7 @@ Follow `lean-runbook` strictly inside your worktree:
    - Confirm both exact models via `swarm(action="status")` — never silently fall back to same-vendor review; if `swarm` is unavailable, stop and alert the user.
    - **Important git tip for the critic brief:** Because `slice-<short-slug>` still holds `slice/<slice-slug>` checked out in its `share` worktree, tell `critic-<short-slug>` to inspect `git diff epic/<epic-slug>...slice/<slice-slug>` and `git log --oneline epic/<epic-slug>..slice/<slice-slug>` directly (or read files via `git show slice/<slice-slug>:<path>`), never `git checkout slice/<slice-slug>` (which fails with `already used by worktree`).
    - If the critic finds `blocker` or `high` issues, send those findings back to `@slice-<short-slug>` (still awake/waiting in its worktree!) for 1 targeted fix pass, then re-verify with `@critic-<short-slug>`.
-   - Once approved, record `Builder: <model> | Critic: <model>` in `.loop/<slice-slug>/branch-review.md` and `EPIC.md`'s Merge Log, then retire the critic: `swarm(action="kill", name="critic-<short-slug>")`.
+   - Once approved, record `Builder: <model> | Reviewer: <model>` in `.loop/<slice-slug>/branch-review.md` and `EPIC.md`'s Merge Log, then retire the critic: `swarm(action="kill", name="critic-<short-slug>")`.
 2. **Merge & Gate on `epic/<epic-slug>` (Coordinator main repo):**
    - `git merge --no-ff slice/<slice-slug>` (or rebase cleanly if needed).
    - Run the full integration quiet gate (`tools/gate.sh`) on `epic/<epic-slug>` to verify cross-slice integration.
