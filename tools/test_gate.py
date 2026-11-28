@@ -112,8 +112,32 @@ class TestGate(GateFixture):
         self.assertIn("4 tests < 86", r.stdout)
 
     def test_rejects_unknown_option(self):
-        r = self.gate("--bogus")
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.gate("--bogus").returncode, 2)
+        self.assertEqual(self.gate("--fast", "--bogus").returncode, 2)
+
+    def test_skipped_tests_do_not_count_toward_floor_and_empty_suite_fails(self):
+        (self.root / SUITES[0] / "test_x.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n"
+            "    @unittest.skip('nope')\n    def test_skip(self): pass\n"
+        )
+        r = self.gate("--fast", min_tests="4")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("executed 0 tests", r.stdout)
+        (self.root / SUITES[0] / "test_x.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n"
+            "    def test_ok(self): pass\n"
+            "    @unittest.skip('nope')\n    def test_skip(self): pass\n"
+        )
+        r2 = self.gate("--fast", min_tests="5")
+        self.assertNotEqual(r2.returncode, 0)
+        self.assertIn("4 tests < 5", r2.stdout)
+
+    def test_fails_on_dangling_symlink_in_legacy_layout_dir(self):
+        (self.root / "antigravity").mkdir()
+        (self.root / "antigravity/broken").symlink_to("/nonexistent/target")
+        r = self.gate("--fast")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("antigravity", r.stdout)
 
     def test_fast_flag_sets_gate_fast_and_full_run_clears_it(self):
         (self.root / SUITES[3] / "test_x.py").write_text(

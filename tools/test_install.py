@@ -116,6 +116,10 @@ class TestInstallRegistry(Sandbox):
         self.assertIn("marketplace.json", r.stderr)
         self.assertEqual(self.names(self.home), [])
 
+
+class TestInstallStatic(unittest.TestCase):
+    """Non-sandbox static guards that MUST also run under `tools/gate.sh --fast` (INV-6, EDGE-11)."""
+
     def test_install_sh_has_no_literal_plugin_or_skill_names(self):
         text = (ROOT / "install.sh").read_text()
         names = set(registry()) | {p.parent.name for s in registry().values() for p in s.glob("skills/*/SKILL.md")}
@@ -363,6 +367,36 @@ class TestRepairAndGuards(Sandbox):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.names(self.home / ".cache/ai-plugins-backups")), 1)
         self.assertEqual((d / "skills/lean-runbook/SKILL.md").read_bytes(), (registry()["lean-runbook"] / "skills/lean-runbook/SKILL.md").read_bytes())
+
+    def test_symlinked_repo_path_is_idempotent_and_uninstalls_cleanly(self):
+        repo_link = self.tmp / "repo-link"
+        repo_link.symlink_to(ROOT)
+        self.repo = repo_link
+        self.assertEqual(self.install("--antigravity").returncode, 0)
+        r2 = self.install("--antigravity")
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertFalse((self.home / ".cache/ai-plugins-backups").exists(), r2.stdout)
+        st = self.install("--antigravity", "--status")
+        self.assertIn("[linked]", st.stdout)
+        self.assertNotIn("points elsewhere", st.stdout)
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertEqual(self.names(self.home / ".gemini/config/plugins"), [])
+        self.assertEqual(self.names(self.home / ".local/bin"), [])
+
+    def test_failing_claude_plugin_install_exits_nonzero_and_skips_shims(self):
+        (self.tmp / "stub/claude").write_text('#!/bin/sh\necho "$@" >> "$HOME/claude.log"\n[ "$2" = "install" ] && exit 1\nexit 0\n')
+        r = self.install("--claude")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Claude Code: done.", r.stdout)
+        self.assertEqual(self.names(self.home / ".local/bin"), [])
+
+    def test_string_statusline_in_settings_json_warns_without_crashing(self):
+        cfg = self.home / ".claude"
+        cfg.mkdir(parents=True)
+        (cfg / "settings.json").write_text('{"statusLine": "python3 /x/egm-runbook/scripts/statusline"}\n')
+        r = self.install("--claude")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("statusLine", r.stderr)
 
 
 if __name__ == "__main__":

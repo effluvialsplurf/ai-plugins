@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CALLER_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 AG_DEST="${HOME}/.gemini/config/plugins"
 SKILLS_DEST=""
 BIN_DEST="${HOME}/.local/bin"
@@ -188,9 +189,9 @@ matches_filter() {
 
 resolve_path_abs() {
   local p="$1"
-  if [[ "${p}" == "~"* ]]; then
-    p="${HOME}${p#\~}"
-  fi
+  case "${p}" in
+    "~"|"~"/*) p="${HOME}${p#\~}" ;;
+  esac
   if [[ "${p}" != /* ]]; then
     p="$(pwd)/${p}"
   fi
@@ -228,7 +229,7 @@ link_or_copy_dir() {
   if [[ "${MODE}" == "link" ]]; then
     if [[ -L "${dst}" ]]; then
       local current
-      current="$(readlink -f "${dst}")"
+      current="$(readlink -f "${dst}" 2>/dev/null || true)"
       if [[ "${current}" == "${src}" ]]; then
         echo "${label}: ${name} already linked -> ${src}"
         return 0
@@ -259,13 +260,17 @@ link_or_copy_dir() {
 # Retarget links that still point into the old claude/ or antigravity/ layout to plugins/.
 # Uses raw readlink (dangling links must resolve); links to anything else are left alone.
 repair_legacy_links() {
-  local dir="$1" l raw new
+  local dir="$1" l raw rel new
   [[ -d "${dir}" ]] || return 0
   for l in "${dir}"/*; do
     [[ -L "${l}" ]] || continue
     raw="$(readlink "${l}")"
-    case "${raw}" in "${REPO_DIR}/claude/"*|"${REPO_DIR}/antigravity/"*) ;; *) continue ;; esac
-    new="${REPO_DIR}/plugins/${raw#"${REPO_DIR}"/*/}"
+    case "${raw}" in
+      "${REPO_DIR}/claude/"*|"${REPO_DIR}/antigravity/"*) rel="${raw#"${REPO_DIR}"/*/}" ;;
+      "${CALLER_REPO_DIR}/claude/"*|"${CALLER_REPO_DIR}/antigravity/"*) rel="${raw#"${CALLER_REPO_DIR}"/*/}" ;;
+      *) continue ;;
+    esac
+    new="${REPO_DIR}/plugins/${rel}"
     if [[ ! -e "${new}" ]]; then
       echo "warning: cannot repair ${l} -> ${raw}: ${new} does not exist" >&2
     elif [[ "${dir}" == "${AG_DEST}" && ! -f "${new}/plugin.json" ]]; then
@@ -282,7 +287,7 @@ repair_legacy_links() {
 # Warn only (never write) about leftovers of the removed egm-runbook plugin.
 warn_stale_claude_config() {
   local cfg="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
-  if grep -q 'egm-runbook' <(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("statusLine",{}).get("command",""))' "${cfg}/settings.json" 2>/dev/null); then
+  if grep -q 'egm-runbook' <(python3 -I -c 'import json,sys; sl=json.load(open(sys.argv[1])).get("statusLine"); print(sl.get("command","") if isinstance(sl,dict) else (sl or ""))' "${cfg}/settings.json" 2>/dev/null); then
     echo "warning: ${cfg}/settings.json statusLine still points at egm-runbook; edit or remove it (left unchanged)." >&2
   fi
   if grep -qs 'egm-runbook@ai-plugins' "${cfg}/settings.json" "${cfg}/plugins/installed_plugins.json"; then
@@ -442,7 +447,7 @@ install_antigravity() {
     src="${REPO_DIR}/${reg_src}"
     [[ -f "${src}/plugin.json" ]] || continue
     matches_filter "${name}" || continue
-    mkdir -p "${AG_DEST}"
+    mkdir -p "${AG_DEST}" || return 1
     dst="${AG_DEST}/${name}"
     link_or_copy_dir "Antigravity" "${src}" "${dst}" "${name}" || return 1
     installed=$((installed + 1))
@@ -505,11 +510,16 @@ install_claude() {
   claude plugin marketplace add "${REPO_DIR}" || true
   claude plugin marketplace update ai-plugins || echo "warning: marketplace update failed; continuing" >&2
 
+  local failed=0
   for plugin in "${plugins[@]}"; do
     echo "Claude Code: installing ${plugin}@ai-plugins..."
-    claude plugin install "${plugin}@ai-plugins"
+    claude plugin install "${plugin}@ai-plugins" || failed=1
   done
 
+  if [[ "${failed}" -ne 0 ]]; then
+    echo "Claude Code: one or more plugin installs failed." >&2
+    return 1
+  fi
   echo "Claude Code: done. Restart Claude Code if a session is open."
 }
 
@@ -531,16 +541,20 @@ uninstall_claude() {
   if [[ -z "${ONLY_FILTER}" ]]; then
     echo "  claude plugin marketplace remove ai-plugins"
   fi
+  if [[ "${TARGET}" == "claude" && "${BIN_EXPLICIT}" -eq 0 ]]; then
+    echo "  (shared CLI shims in ${BIN_DEST} were left in place; pass --uninstall --bin-dir ${BIN_DEST} to remove them)"
+  fi
 }
 
 install_skills() {
   local dest
   dest="$(resolve_path_abs "${SKILLS_DEST}")"
   repair_legacy_links "${dest}" || return 1
-  mkdir -p "${dest}"
+  mkdir -p "${dest}" || return 1
   local entry skill group rel default_inc src dst
   local installed=0
   local installed_names=()
+  local copy_warned=()
 
   for entry in "${SKILL_CATALOG[@]}"; do
     IFS='|' read -r skill group rel default_inc <<< "${entry}"
@@ -554,6 +568,9 @@ install_skills() {
     link_or_copy_dir "Skills" "${src}" "${dst}" "${skill}" || return 1
     installed=$((installed + 1))
     installed_names+=("${skill}")
+    if [[ "${MODE}" == "copy" && ( -d "${REPO_DIR}/plugins/${group}/scripts" || -d "${REPO_DIR}/plugins/${group}/templates" ) ]]; then
+      copy_warned+=("${skill} (needs ${REPO_DIR}/plugins/${group}/{scripts,templates})")
+    fi
   done
 
   if [[ "${installed}" -eq 0 ]]; then
@@ -563,14 +580,16 @@ install_skills() {
 
   echo ""
   echo "Notes for non-native harnesses (see ${REPO_DIR}/docs/PORTABILITY.md):"
-  echo "  - helper scripts and templates live under ${REPO_DIR}/plugins/<plugin>/; skill scripts run from ${dest}/<skill>/scripts/."
+  echo "  - helper scripts and templates live under ${REPO_DIR}/plugins/<plugin>/; CLI shims are linked into ${BIN_DEST}."
+  for w in "${copy_warned[@]}"; do
+    echo "  - warning (--copy): ${w}; prefer --link if you need sibling helpers."
+  done
   for skill in "${installed_names[@]}"; do
     for entry in "${BIN_CATALOG[@]}"; do
       IFS='|' read -r name group rel <<< "${entry}"
       [[ "${name}" == "${skill}" ]] || continue
-      echo "  - ${skill}: needs the bundled engine; run ./install.sh --bin-dir ~/.local/bin --only ${skill}."
-      if grep -q mcpServers "${REPO_DIR}/${rel%%/scripts/*}/.claude-plugin/plugin.json" 2>/dev/null; then
-        echo "    Then register '${skill} mcp' as a stdio MCP server in your harness."
+      if grep -q mcpServers "${REPO_DIR}/plugins/${group}/.claude-plugin/plugin.json" 2>/dev/null; then
+        echo "  - ${skill}: register '${skill} mcp' as a stdio MCP server in your harness (shim linked in ${BIN_DEST})."
       fi
     done
   done

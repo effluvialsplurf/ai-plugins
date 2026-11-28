@@ -46,6 +46,35 @@ class TestLayout(unittest.TestCase):
         src = (ROOT / "plugins/swarmctl/scripts/tests/test_mcp_packaging.py").read_text()
         self.assertIn("REPO_ROOT = Path(__file__).resolve().parents[4]", src)
 
+    def test_no_committed_symlinks(self):
+        out = subprocess.run(["git", "ls-files", "-s"], cwd=ROOT, capture_output=True, text=True, check=True)
+        links = [line for line in out.stdout.splitlines() if line.startswith("120000 ")]
+        self.assertEqual(links, [], f"committed symlinks violate E3: {links}")
+
+    def test_hook_manifests_match_harness_schemas(self):
+        lr = ROOT / "plugins/lean-runbook"
+        agy = json.loads((lr / "hooks.json").read_text())
+        self.assertIn("lean-runbook-gate", agy)
+        gate = agy["lean-runbook-gate"]
+        self.assertTrue(gate.get("SessionStart") and gate.get("PreToolUse"))
+        agy_cmds = [h["command"] for h in gate["SessionStart"]] + [
+            h["command"] for g in gate["PreToolUse"] for h in g.get("hooks", [])
+        ]
+        for cmd in agy_cmds:
+            self.assertIn("--harness antigravity", cmd)
+            self.assertNotIn("hook-", cmd)
+            self.assertIn("./skills/lean-runbook/scripts/runbook.py", cmd)
+        self.assertTrue((lr / "skills/lean-runbook/scripts/runbook.py").is_file())
+        cl = json.loads((lr / "hooks/hooks.json").read_text())
+        self.assertIn("hooks", cl)
+        ch = cl["hooks"]
+        self.assertTrue(ch.get("SessionStart") and ch.get("PreToolUse"))
+        cl_cmds = [h["command"] for g in ch["SessionStart"] + ch["PreToolUse"] for h in g.get("hooks", [])]
+        for cmd in cl_cmds:
+            self.assertIn("--harness claude", cmd)
+            self.assertNotIn("hook-", cmd)
+            self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/lean-runbook/scripts/runbook.py", cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
