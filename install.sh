@@ -209,6 +209,16 @@ backup_existing() {
   echo "backed up existing ${dst} -> ${backup}"
 }
 
+# Remove a symlink we are about to replace; a link pointing outside this repo is backed up first.
+drop_link() {
+  local dst="$1" name="$2" raw
+  raw="$(readlink "${dst}")"
+  case "${raw}" in
+    "${REPO_DIR}/"*) rm "${dst}" ;;
+    *) echo "foreign symlink ${dst} -> ${raw}"; backup_existing "${dst}" "${name}" ;;
+  esac
+}
+
 link_or_copy_dir() {
   local label="$1"
   local src="$2"
@@ -223,7 +233,7 @@ link_or_copy_dir() {
         echo "${label}: ${name} already linked -> ${src}"
         return 0
       fi
-      rm "${dst}" || return 1
+      drop_link "${dst}" "${name}" || return 1
     elif [[ -e "${dst}" ]]; then
       echo -n "${label}: "
       backup_existing "${dst}" "${name}" || return 1
@@ -232,7 +242,10 @@ link_or_copy_dir() {
     echo "${label}: linked ${dst} -> ${src}"
   else
     if [[ -L "${dst}" ]]; then
-      rm "${dst}" || return 1
+      drop_link "${dst}" "${name}" || return 1
+    elif [[ -d "${dst}" ]] && diff -rq -x __pycache__ "${src}" "${dst}" >/dev/null 2>&1; then
+      echo "${label}: ${name} already up to date at ${dst}"
+      return 0
     elif [[ -e "${dst}" ]]; then
       echo -n "${label}: "
       backup_existing "${dst}" "${name}" || return 1
@@ -255,6 +268,8 @@ repair_legacy_links() {
     new="${REPO_DIR}/plugins/${raw#"${REPO_DIR}"/*/}"
     if [[ ! -e "${new}" ]]; then
       echo "warning: cannot repair ${l} -> ${raw}: ${new} does not exist" >&2
+    elif [[ "${dir}" == "${AG_DEST}" && ! -f "${new}/plugin.json" ]]; then
+      echo "warning: not repairing ${l} -> ${raw}: ${new} has no root plugin.json (not an Antigravity plugin)" >&2
     elif rm "${l}" && ln -s "${new}" "${l}"; then
       echo "repaired ${l} -> ${new}"
     else

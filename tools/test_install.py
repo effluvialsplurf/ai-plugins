@@ -202,6 +202,13 @@ class TestRepairAndGuards(Sandbox):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to(target)
 
+    def tearDown_home(self):
+        for p in list(self.home.iterdir()) + [self.tmp / "skills"]:
+            if p.is_symlink() or p.is_file():
+                p.unlink()
+            elif p.exists():
+                shutil.rmtree(p)
+
     def test_dangling_legacy_antigravity_link_is_repaired_and_foreign_link_untouched(self):
         dest = self.home / ".gemini/config/plugins"
         self.link(dest / "lean-runbook", ROOT / "antigravity/lean-runbook")
@@ -215,9 +222,42 @@ class TestRepairAndGuards(Sandbox):
 
     def test_legacy_link_is_repaired_even_when_only_filter_excludes_it(self):
         dest = self.home / ".gemini/config/plugins"
+        self.link(dest / "lean-runbook", ROOT / "claude/lean-runbook")
+        self.assertEqual(self.install("--antigravity", "--only", "swarmctl").returncode, 1)  # nothing matched, repair still ran
+        self.assertEqual(os.readlink(dest / "lean-runbook"), str(ROOT / "plugins/lean-runbook"))
+
+    def test_legacy_antigravity_link_to_plugin_without_root_manifest_is_warned_and_left(self):
+        # BR-8/INV-5: plugins without a root plugin.json are not Antigravity plugins; repair must not retarget them.
+        dest = self.home / ".gemini/config/plugins"
         self.link(dest / "deep-review", ROOT / "claude/deep-review")
-        self.assertEqual(self.install("--antigravity", "--only", "lean-runbook").returncode, 0)
-        self.assertEqual(os.readlink(dest / "deep-review"), str(ROOT / "plugins/deep-review"))
+        r = self.install("--antigravity")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(dest / "deep-review"), str(ROOT / "claude/deep-review"))
+        self.assertIn("no root plugin.json", r.stderr)
+
+    def test_foreign_and_near_miss_links_are_untouched(self):
+        dest = self.home / ".gemini/config/plugins"
+        foreign = {"a": f"{ROOT}-old/claude/deep-review", "b": "/x/ai-plugins/claude/deep-review"}
+        for n, t in foreign.items():
+            self.link(dest / n, t)
+        r = self.install("--antigravity")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for n, t in foreign.items():
+            self.assertEqual(os.readlink(dest / n), t)
+        self.assertNotIn("repair", r.stdout + r.stderr)  # foreign links are skipped silently
+
+    def test_foreign_symlink_at_installed_name_is_backed_up_not_deleted(self):
+        for flags in ((), ("--copy",)):
+            with self.subTest(flags=flags):
+                self.tearDown_home()
+                dest = self.home / ".gemini/config/plugins"
+                self.link(dest / "lean-runbook", f"{ROOT}-old/lean-runbook")
+                r = self.install("--antigravity", *flags)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("backed up existing", r.stdout)
+                bak = (self.home / ".cache/ai-plugins-backups").iterdir()
+                self.assertEqual([os.readlink(p) for p in bak], [f"{ROOT}-old/lean-runbook"])
+                self.assertTrue((dest / "lean-runbook").exists())
 
     def test_dangling_legacy_bin_link_is_repaired_in_place(self):
         bindir = self.tmp / "bin"
@@ -255,12 +295,36 @@ class TestRepairAndGuards(Sandbox):
                  cfg / "plugins/installed_plugins.json": '{"plugins": {"egm-runbook@ai-plugins": [{}]}}\n'}
         for f, text in files.items():
             f.write_text(text)
+        os.utime(cfg / "settings.json", ns=(10**9, 10**9))
+        before = {f: (f.read_bytes(), f.stat().st_mode, f.stat().st_mtime_ns) for f in files}
         r = self.install("--claude")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("statusLine", r.stderr)
         self.assertIn("egm-runbook@ai-plugins", r.stderr)
-        for f, text in files.items():
-            self.assertEqual(f.read_bytes(), text.encode(), f)
+        self.assertEqual({f: (f.read_bytes(), f.stat().st_mode, f.stat().st_mtime_ns) for f in files}, before)
+
+    def test_zombie_enabled_only_in_settings_json_warns_and_config_dir_is_honored(self):
+        alt = self.tmp / "alt-claude"
+        alt.mkdir()
+        text = '{"enabledPlugins": {"egm-runbook@ai-plugins": true}}\n'
+        (alt / "settings.json").write_text(text)
+        self.env["CLAUDE_CONFIG_DIR"] = str(alt)
+        r = self.install("--claude")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("egm-runbook@ai-plugins is still installed", r.stderr)
+        self.assertNotIn("statusLine", r.stderr)
+        self.assertEqual((alt / "settings.json").read_text(), text)
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.home / ".claude")
+        self.assertNotIn("warning", self.install("--claude").stderr)
+
+    def test_failing_marketplace_update_only_warns_and_install_continues(self):
+        (self.tmp / "stub/claude").write_text('#!/bin/sh\necho "$@" >> "$HOME/claude.log"\n[ "$2 $3" = "marketplace update" ] && exit 1\nexit 0\n')
+        r = self.install("--claude")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("marketplace update failed", r.stderr)
+        log = (self.home / "claude.log").read_text()
+        for name in registry():
+            self.assertIn(f"plugin install {name}@ai-plugins", log)
 
     def test_clean_claude_config_gives_no_warnings(self):
         r = self.install("--claude")
@@ -268,20 +332,37 @@ class TestRepairAndGuards(Sandbox):
 
     def snapshot(self):
         snap = {}
-        for p in sorted(self.home.rglob("*")):
-            if p.name == "claude.log":
-                continue
-            st = p.lstat()
-            snap[str(p)] = (os.readlink(p) if p.is_symlink() else None, st.st_mtime_ns, st.st_mode)
+        for dp, dns, fns in os.walk(self.tmp):  # followlinks=False: links are recorded, not entered
+            for n in dns + fns:
+                p = Path(dp, n)
+                if p.name == "claude.log" or p.parts[len(self.tmp.parts)] in ("stub", "repo"):
+                    continue
+                st = p.lstat()
+                body = p.read_bytes() if p.is_file() and not p.is_symlink() else None
+                snap[str(p)] = (os.readlink(p) if p.is_symlink() else None, body, st.st_mtime_ns, st.st_mode)
         return snap
 
     def test_second_install_changes_nothing_on_the_filesystem(self):
-        self.assertEqual(self.install().returncode, 0)
-        before = self.snapshot()
-        self.assertTrue(before)
-        r = self.install()
+        dest = str(self.tmp / "skills")
+        for flags in ((), ("--copy",), ("--skills", dest), ("--skills", dest, "--copy")):
+            with self.subTest(flags=flags):
+                self.tearDown_home()
+                self.assertEqual(self.install(*flags).returncode, 0)
+                before = self.snapshot()
+                self.assertTrue(before)
+                r = self.install(*flags)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertFalse((self.home / ".cache/ai-plugins-backups").exists(), r.stdout)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_copy_install_over_changed_copy_backs_it_up_and_recopies(self):
+        self.assertEqual(self.install("--antigravity", "--copy").returncode, 0)
+        d = self.home / ".gemini/config/plugins/lean-runbook"
+        (d / "skills/lean-runbook/SKILL.md").write_text("{}")
+        r = self.install("--antigravity", "--copy")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(len(self.names(self.home / ".cache/ai-plugins-backups")), 1)
+        self.assertEqual((d / "skills/lean-runbook/SKILL.md").read_bytes(), (registry()["lean-runbook"] / "skills/lean-runbook/SKILL.md").read_bytes())
 
 
 if __name__ == "__main__":

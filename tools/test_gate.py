@@ -42,7 +42,8 @@ class GateFixture(unittest.TestCase):
     def gate(self, *args, min_tests="4", env=None):
         if min_tests is not None:
             self.patch_floor(min_tests)
-        return subprocess.run(["bash", str(self.root / "tools/gate.sh"), *args], env={**os.environ, **(env or {})},
+        merged = {k: v for k, v in {**os.environ, **(env or {})}.items() if v is not None}  # None unsets
+        return subprocess.run(["bash", str(self.root / "tools/gate.sh"), *args], env=merged,
                               capture_output=True, text=True, timeout=120)
 
 
@@ -102,8 +103,8 @@ class TestGate(GateFixture):
         (self.root / SUITES[3] / "test_x.py").write_text(
             "import os, unittest\nclass T(unittest.TestCase):\n    def test_env(self):\n"
             "        self.assertEqual(os.environ.get('GATE_FAST', 'unset'), os.environ['EXPECT'])\n")
-        for args, expect in ((("--fast",), "1"), ((), "unset")):
-            r = self.gate(*args, env={"EXPECT": expect, "GATE_FAST": "1"})
+        for args, expect, pre in ((("--fast",), "1", None), ((), "unset", "1")):
+            r = self.gate(*args, env={"EXPECT": expect, "GATE_FAST": pre})
             self.assertEqual((r.returncode, r.stdout.strip()), (0, "gate: PASS (4 tests)"), (args, r.stdout))
 
 
