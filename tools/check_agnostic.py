@@ -8,11 +8,30 @@ import re
 import sys
 from pathlib import Path
 
-# ~/.gemini, ${CLAUDE_PLUGIN_ROOT}, or a provider model ID (same families as tools/test_agnostic_skills.py).
-FORBIDDEN = re.compile(r"~/\.gemini|\$\{CLAUDE_PLUGIN_ROOT\}|gemini-\d|gemini-[a-z]+-|claude-(?:opus|sonnet|haiku)|gpt-\d", re.I)
+# Model-family words, provider model IDs, .gemini install paths and plugin-root/data variables. Deliberately NOT bare
+# "claude"/"codex": Claude-first plugins legitimately name their harness and the codex CLI. Narrower than
+# tools/test_agnostic_skills.py (SLICE-5, core lean-runbook skills), which also bans those two words.
+# INV-9 (no version probes) is enforced for the core skills by SLICE-5's test, not here; build-loop is out of its scope.
+FORBIDDEN = re.compile(
+    r"\.gemini\b|PLUGIN_(?:ROOT|DATA)|claude-(?:\d|opus|sonnet|haiku|fable|sub)|gpt-\w|\bo[1-9]\b|"
+    r"\b(?:gemini|opus|sonnet|haiku|fable|gpt)\b", re.I)
+# swarmctl's job is to drive runner CLIs, so it may name them; IDs, paths and variables are still banned there.
+RUNNER_OK = {"swarmctl": re.compile(r"\b(?:gemini|gpt)\b", re.I)}
 ALLOWED = re.compile(r"(?:^|/)references/(?:harness|version)-[^/]*\.md$")  # adapter paths
-TEXT_GLOBS = ("skills/**/*.md", "agents/*.md", "templates/*.md", "rules/*.md")
+# Antigravity hooks.json is scanned; Claude-only hooks/hooks.json and .claude-plugin manifests are not text-scanned
+# (swarmctl's mcpServers legitimately uses ${CLAUDE_PLUGIN_ROOT}); manifests get the key check below instead.
+TEXT_GLOBS = ("skills/**/*.md", "agents/*.md", "templates/*.md", "rules/*.md", "hooks.json")
 BAD_KEYS = ("dependencies", "allowCrossMarketplaceDependenciesOn")
+
+
+def _keys(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield k
+            yield from _keys(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _keys(v)
 
 
 def scan(root: Path) -> list:
@@ -27,18 +46,28 @@ def scan(root: Path) -> list:
                 text = f.read_text()
                 for n, line in enumerate(text.splitlines(), 1):
                     for m in FORBIDDEN.finditer(line):
+                        ok = RUNNER_OK.get(plugin.name)
+                        if ok and ok.fullmatch(m.group(0)) and not re.match(r"\.gemini|gpt-", line[m.start():], re.I):
+                            continue
                         bad.append(f"{rel(f)}:{n}: forbidden {m.group(0)!r} outside adapter paths")
         for f in sorted(plugin.glob("agents/*.md")):
-            if not re.search(r"\A---\n(?:.*\n)*?model:\s*inherit\s*\n(?:.*\n)*?---", f.read_text()):
+            fm = re.match(r"---\n(.*?\n)?---", f.read_text(), re.S)
+            models = re.findall(r"^model:\s*(.*?)\s*$", fm.group(1) or "", re.M) if fm else []
+            if not models or re.sub(r"\s+#.*$", "", models[-1]).strip("\"'") != "inherit":
                 bad.append(f"{rel(f)}: agent must declare 'model: inherit'")
     manifests = [*root.glob("plugins/*/.claude-plugin/plugin.json"), *root.glob("plugins/*/plugin.json"),
                  root / ".claude-plugin/marketplace.json"]
     for f in manifests:
+        if not f.is_file():
+            continue
         try:
             data = json.loads(f.read_text())
         except (OSError, ValueError):
-            continue  # gate.sh reports invalid JSON
-        bad += [f"{rel(f)}: manifest key {k!r} is forbidden" for k in BAD_KEYS if isinstance(data, dict) and k in data]
+            bad.append(f"{rel(f)}: manifest is not valid JSON")
+            continue
+        if not isinstance(data, dict):
+            bad.append(f"{rel(f)}: manifest must be a JSON object")
+        bad += [f"{rel(f)}: manifest key {k!r} is forbidden" for k in sorted(set(_keys(data)) & set(BAD_KEYS))]
     return bad
 
 

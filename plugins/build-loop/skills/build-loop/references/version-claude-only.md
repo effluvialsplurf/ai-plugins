@@ -5,6 +5,9 @@ checks that aren't a model's opinion carry more weight.
 
 ## Seats (copy into `.loop/SEATS.md`)
 
+The agents inherit the controller's model. To seat a different model per role, pass the Agent tool's `model` parameter
+on each dispatch, as `.loop/SEATS.md` says. The suggested seating below: Sonnet builds, Opus plans and reviews.
+
 | Role | Use | Notes |
 |---|---|---|
 | Controller | this Claude Code session (Opus) | Kept thin; see `build-loop:context-costs` |
@@ -21,7 +24,7 @@ checks that aren't a model's opinion carry more weight.
 
 ## Where the review rule bends
 
-Sonnet builds and Opus reviews, so code gets a different model. The plan does not: Opus writes it and Opus checks it.
+With the suggested seating, Sonnet builds and Opus reviews, so code gets a different model. The plan does not: Opus writes it and Opus checks it.
 The plan check is typically the layer that catches the most correctness bugs, and ideally a different vendor runs it. So the plan check here is a known exception, and the loop makes up for it:
 
 1. **Make the plan check adversarial and concrete.** A fresh reviewer that never saw the plan written, told to prove it

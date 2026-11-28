@@ -32,7 +32,7 @@ before the first build; it applies to any work with subagents, not only this loo
    | Claude Code only | Claude only | `references/version-claude-only.md` |
    | Claude Code + Kiro | Claude + Kiro | `references/version-claude-kiro.md` |
    | Claude Code + Codex (Kiro optional) | Claude + Codex | `references/version-claude-codex.md` |
-   | Any other harness or model family (Gemini, OpenAI/Codex, Open-Weights, Cursor, OpenCode, Antigravity) | Custom / Agnostic | `references/version-custom-harness.md` |
+   | Any other harness or model family (other model families, open-weights, Cursor, OpenCode, Antigravity) | Custom / Agnostic | `references/version-custom-harness.md` |
 
 2. **Make `.loop/` in the repo root** and add it to `.git/info/exclude` (or `.gitignore` if the team wants it).
    - `.loop/SEATS.md`: copy the chosen version's seat table. It is the one place that says which model does each role,
@@ -66,10 +66,10 @@ one. Blank or absent means the stages below run as written. The human runs the e
 | Stage | Do | Leave when |
 |---|---|---|
 | design | The design-trace seat traces what exists. Put numbered decisions to the human: domain questions first, then engineering defaults they can accept in one line, each with a recommendation. **Stop** for answers unless PROJECT.md's "how I answer design questions" settles them. With `Design input: egm`, see "Design input: egm" below. | Decisions recorded in LOOP-STATE |
-| plan | The planner writes a full-code plan (superpowers:writing-plans format), each file under 1,000 lines. Split it: an explorer writes the skeleton (file map, interfaces, decisions) and a pack of the exact code tasks lean on; one fresh writer per task file. | Plan written |
+| plan | The planner writes a full-code plan (superpowers:writing-plans format if installed, else a plan with the exact code for each task), each file under 1,000 lines. Split it: an explorer writes the skeleton (file map, interfaces, decisions) and a pack of the exact code tasks lean on; one fresh writer per task file. | Plan written |
 | plan check | The plan-check seat tries to prove the plan wrong against the real code (checklist in `references/setup.md`). Fixes go to a fresh agent per affected task file, given the findings, the pack and the task file, never one agent over the whole plan. | No open blocker |
-| build | superpowers:subagent-driven-development with the seats from SEATS.md. Copy `templates/implementer-contract.md`, `dispatch.md`, `task-review.md` and `fixer-brief.md` into `.loop/<slug>/`. One task at a time, a task review after each task that changes stored data or behaviour. Fix rounds go to a fresh builder fed the "For whoever fixes this" handoff. Every ruling goes in the ledger: `Ruling: what, why, cost if wrong`. | Every task complete |
-| branch review | The whole-branch review seat reads the full diff (`deep-review:deep-review` rubrics). Fix real findings; one verification pass; only a new correctness finding earns another full pass. | Clean |
+| build | superpowers:subagent-driven-development if installed (otherwise follow the templates directly) with the seats from SEATS.md. Copy `templates/implementer-contract.md`, `dispatch.md`, `task-review.md` and `fixer-brief.md` into `.loop/<slug>/`. One task at a time, a task review after each task that changes stored data or behaviour. Fix rounds go to a fresh builder fed the "For whoever fixes this" handoff. Every ruling goes in the ledger: `Ruling: what, why, cost if wrong`. | Every task complete |
+| branch review | The whole-branch review seat reads the full diff (`deep-review:deep-review` rubrics if installed, else review for correctness directly). Fix real findings; one verification pass; only a new correctness finding earns another full pass. | Clean |
 | check | Run the gate commands from PROJECT.md. If PROJECT.md has a live check, its seat runs it with PROJECT.md's limits written into the brief. | Gate green, live check recorded |
 | pr | Push the branch and open the PR per PROJECT.md. Watch it with `scripts/watch-pr.sh` only where a bot comments. | PR open |
 | done | Merge only if PROJECT.md grants it for this repo; otherwise hand the PR to the human. Note the result in LOOP-STATE and suggest what's next. | |
@@ -111,11 +111,15 @@ code before it is built.
 
 ## What ships with this plugin
 
+The three agents inherit the controller's model (the default). `.loop/SEATS.md` says which model each role should use;
+set it per dispatch through your harness's model override. Without an override, every seat runs on the controller's model.
+
 | Path | Use |
 |---|---|
-| `agents/planner.md` | Opus. Design traces, plans, plan fixes, live checks |
-| `agents/builder.md` | Sonnet. Build tasks, fix rounds, doc and skill updates |
-| `agents/reviewer.md` | Opus. Plan checks, task reviews, branch reviews, re-reviews (read-only except its report) |
+| `agents/planner.md` | Design traces, plans, plan fixes, live checks |
+| `agents/builder.md` | Build tasks, fix rounds, doc and skill updates |
+| `agents/reviewer.md` | Plan checks, task reviews, branch reviews, re-reviews (read-only except its report) |
+
 | `templates/` | LOOP-STATE, FINDINGS, implementer contract, dispatch, task-review brief, fixer brief |
 | `scripts/stall-watch.sh`, `scripts/watch-pr.sh` | Waiting without stalling |
 | `scripts/kiro-run.sh`, `scripts/kiro-usage.sh` | Kiro seats (Claude + Kiro and Claude + Codex versions) |
@@ -125,7 +129,7 @@ code before it is built.
 Script arguments are in each script's header comment. Run them from the plugin's `scripts/` folder (two levels above this skill's folder; see
 `references/version-custom-harness.md` for harness/model substitutions). Scripts that
 keep state default to `.loop/` at the main checkout's root (shared by every worktree); set `LOOP_DIR` to move it.
-`codex-review.sh` takes the rubric as a file: pass the `deep-review` plugin's `references/correctness.md`.
+`codex-review.sh` takes the rubric as a file: pass the `deep-review` plugin's `references/correctness.md`; without deep-review, review for correctness directly.
 `stall-watch.sh` and `codex-usage.sh` need GNU `find`/`stat` (Linux or WSL; on macOS install coreutils and findutils).
 
 When copying a template into `.loop/<slug>/`, fill its `[PLACEHOLDERS]` before dispatch; agents and Kiro don't expand

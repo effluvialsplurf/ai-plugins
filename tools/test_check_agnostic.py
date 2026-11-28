@@ -64,6 +64,44 @@ class TestCheckAgnostic(Fixture):
         hits = check_agnostic.scan(self.root)
         self.assertEqual(sorted(h.split(":")[0] for h in hits), ["plugins/p/agents/none.md", "plugins/p/agents/pinned.md"])
 
+    def test_each_survivor_now_fails_the_scan(self):
+        survivors = ["claude-3-5-sonnet-20241022", "claude-3-opus", "claude-fable-1", "opus-5.5", "gpt-oss-120b", "o4-mini",
+                     "gemini-pro", "$HOME/.gemini", "${HOME}/.gemini", "/home/u/.gemini/x", "$CLAUDE_PLUGIN_ROOT/a",
+                     "${CLAUDE_PLUGIN_DATA}", "${CLAUDE_PLUGIN_ROOT:-x}", "PLUGIN_DATA", "Sonnet", "HAIKU", "fable"]
+        for s in survivors:
+            self.write("plugins/p/skills/s/SKILL.md", f"see {s} here\n")
+            self.assertTrue(check_agnostic.scan(self.root), s)
+
+    def test_claude_harness_and_codex_names_stay_legal(self):
+        self.write("plugins/p/skills/s/SKILL.md", "Claude Code and the codex CLI; claude-code docs\n")
+        self.assertEqual(check_agnostic.scan(self.root), [])
+
+    def test_hooks_json_is_text_scanned_but_claude_hooks_dir_is_allowlisted(self):
+        self.write("plugins/p/hooks.json", '{"command": "${CLAUDE_PLUGIN_ROOT}/x"}')
+        self.write("plugins/q/hooks/hooks.json", '{"command": "${CLAUDE_PLUGIN_ROOT}/x"}')
+        self.assertEqual([h.split(":")[0] for h in check_agnostic.scan(self.root)], ["plugins/p/hooks.json"])
+
+    def test_forbidden_manifest_keys_are_found_at_any_depth(self):
+        self.write(".claude-plugin/marketplace.json", json.dumps({"plugins": [{"name": "a", "dependencies": ["x"]}]}))
+        self.write("plugins/p/.claude-plugin/plugin.json", json.dumps({"metadata": {"allowCrossMarketplaceDependenciesOn": []}}))
+        self.assertEqual(len(check_agnostic.scan(self.root)), 2)
+
+    def test_non_object_or_invalid_manifest_fails_closed(self):
+        self.write(".claude-plugin/marketplace.json", "[1]")
+        self.write("plugins/p/plugin.json", "{nope")
+        hits = check_agnostic.scan(self.root)
+        self.assertEqual(len(hits), 2, hits)
+        self.assertEqual(self.run_cli().returncode, 1)
+
+    def test_agent_frontmatter_edge_cases(self):
+        ok = {"q": 'model: "inherit"  # follow controller', "s": "model: 'inherit'", "l": "model: pin\nmodel: inherit"}
+        for n, m in ok.items():
+            self.write(f"plugins/p/agents/{n}.md", f"---\nname: {n}\n{m}\n---\nbody\n")
+        self.write("plugins/p/agents/late.md", "---\nname: x\n---\nmodel: inherit\n---\n")
+        self.write("plugins/p/agents/last.md", "---\nmodel: inherit\nmodel: pin\n---\n")
+        hits = check_agnostic.scan(self.root)
+        self.assertEqual(sorted(h.split(":")[0] for h in hits), ["plugins/p/agents/last.md", "plugins/p/agents/late.md"])
+
 
 if __name__ == "__main__":
     unittest.main()

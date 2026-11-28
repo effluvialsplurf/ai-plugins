@@ -160,7 +160,7 @@ If you want full native orchestration, hooks, model seat routing, or IDE rule fi
 2. Open [`docs/CONVERSION-PROMPTS.md`](./docs/CONVERSION-PROMPTS.md) and copy the ready-made prompt for your target family/harness:
    - **OpenAI / GPT / Codex CLI** (Prompt 1)
    - **Google Gemini / Gemini CLI (non-Antigravity)** (Prompt 2)
-   - **Anthropic Claude / Claude Code** — porting `lean-design` + `lean-runbook` (Prompt 3)
+   - **Anthropic Claude / Claude Code** — `lean-design` + `lean-runbook` already run natively here (`/plugin install lean-runbook@ai-plugins`); Prompt 3 is only for porting other tooling
    - **Open-Weights / Local / Multi-Provider** — DeepSeek, Qwen, Llama, Kimi, GLM, Mistral via Ollama/vLLM/OpenRouter/OpenCode/Cline/Aider (Prompt 4)
    - **IDE Harnesses** — Cursor, Windsurf, Kiro, OpenCode, Cline/Roo Code (Prompt 5)
    - **Universal Meta-Prompt** — any custom or future harness/model family (Prompt 6)

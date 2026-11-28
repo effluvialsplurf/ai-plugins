@@ -4,7 +4,7 @@ One row per real finding (not nits that were dismissed on the spot). Ids are sta
 Fix commit as the finding moves; add the row when the finding is first seen.
 
 - Stage: which stage caught it (self-review | task review | whole-branch review | codex review | PR review | CI | live check).
-- Seat / model: who found it (e.g. sonnet reviewer, Kiro opus, Codex, human).
+- Seat / model: who found it (e.g. the reviewer seat, Kiro, Codex, human).
 - Kind: correctness | test gap | docs | other.
 - Severity: critical | important | minor.
 - Status: open | fixing | fixed | defensible (kept, reason in LOOP-STATE Decisions) | wont-fix.

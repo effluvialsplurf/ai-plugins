@@ -8,10 +8,10 @@ description: Use when dispatching subagents, resuming an agent, running a long C
 Practical rules for any workflow where an AI coding harness calls tools many times or delegates work to subagents.
 
 > **Harness & model portability:** The core formula (`cost ≈ calls × average context`) and Rules 1–12 apply to **every**
-> model family and harness (Claude, Gemini, OpenAI/GPT, open-weights/local). The 5-minute vs. 1-hour cache TTL notes and
-> the `scripts/loop_ledger.py` / `scripts/context_breakdown.py` transcript scripts below are Claude Code / Anthropic
-> specific — on other providers, map them to your provider's prefix/context caching (e.g., OpenAI automatic prefix
-> caching, Gemini implicit/explicit context caching, or local KV-cache reuse) and your harness's usage logs.
+> model family and harness (Claude, other providers, open-weights/local). The 5-minute vs. 1-hour cache TTL notes and
+> the `../../scripts/loop_ledger.py` / `../../scripts/context_breakdown.py` transcript scripts below are Claude Code / Anthropic
+> specific — on other providers, map them to your provider's prefix/context caching (e.g., automatic prefix
+> caching, explicit context caching, or local KV-cache reuse) and your harness's usage logs.
 
 ## The one formula
 
@@ -39,7 +39,7 @@ reasoning carried forward across turns. So **fewer calls and fresh contexts pay 
 - If a subagent must orchestrate, give it a longer cache: `subagentPromptCacheTtl` in `settings.json` (or
   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`), or `experimental.cacheTtl: 1h` in that agent's definition (Claude Code
   2.1.248+). Values are `5m` or `1h`. Per the Claude Code prompt-caching docs, the 1-hour setting is ignored for
-  subagents on a Claude subscription using usage credits, so check your plan, and check with `scripts/context_breakdown.py`
+  subagents on a Claude subscription using usage credits, so check your plan, and check with `../../scripts/context_breakdown.py`
   that the "after >5 min gaps" figure fell.
 
 ## Rules
@@ -80,9 +80,9 @@ reasoning carried forward across turns. So **fewer calls and fresh contexts pay 
 
 Two scripts in this plugin read Claude Code's own session transcripts (under `~/.claude/projects/`):
 
-- `scripts/loop_ledger.py` (in this plugin): cost by job group (jobs, calls per job, context at first and last
+- `../../scripts/loop_ledger.py` (relative to this skill's folder): cost by job group (jobs, calls per job, context at first and last
   call, cache writes after long waits).
-- `scripts/context_breakdown.py` (in this plugin): what one job's context is made of.
+- `../../scripts/context_breakdown.py` (relative to this skill's folder): what one job's context is made of.
 
 Arguments are in each script's header. The scale they print is weighted tokens (fresh + 1.25 x cache write + 0.1 x
 cache read + 5 x output); read it as relative cost, not dollars. Run them before and after a change. Change one thing

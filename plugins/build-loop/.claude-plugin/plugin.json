@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run a planned feature end to end with agents (design, full-code plan, plan check, task-by-task build and review, PR), in three versions by the tools you have: Claude only, Claude + Kiro, Claude + Codex. Includes the context and cache cost lessons as their own skill.",
   "author": {
     "name": "effluvialsplurf"

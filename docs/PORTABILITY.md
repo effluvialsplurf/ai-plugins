@@ -23,7 +23,7 @@ conversion via [`docs/CONVERSION-PROMPTS.md`](./CONVERSION-PROMPTS.md).
 Five technical boundaries prevent 100% zero-edit portability across every coding harness:
 
 1. **Lifecycle hook protocols & override gates differ per harness.**
-   - Claude Code uses `SessionStart` / `UserPromptSubmit` / `PreToolUse` (`permissionDecision`, `additionalContext`) and relies on the user's `!` shell prefix bypassing `PreToolUse`.
+   - Claude Code uses `SessionStart` / `UserPromptSubmit` / `PreToolUse` (`permissionDecision`, `additionalContext`).
    - Antigravity 2.0 uses `SessionStart` / `PreToolUse` (`injectSteps`, `decision: "allow" | "deny" | "force_ask"`, camelCase `toolCall.args`).
    - Harnesses without tool-call hooks (or with different schemas) must convert the Spec Gate into their native hook format or a portable `.git/hooks/pre-commit` check calling `runbook.py status`.
 2. **Multi-agent dispatch & git worktree isolation have no universal tool API.**
@@ -33,7 +33,7 @@ Five technical boundaries prevent 100% zero-edit portability across every coding
 3. **Model IDs and quota/rate-limit pools are provider-specific.**
    - Model strings (`claude-sonnet-5-5`, `gemini-4-argon-high`, `gpt-6.1-sol`, `deepseek-r1`, `qwen3-coder`, etc.) change per provider and release. All workflows in this repo operate on **abstract capability roles** (see Section 3) so any model family can fill every seat.
 4. **Plugin manifests and install variables differ.**
-   - Claude Code uses `.claude-plugin/plugin.json` and `${CLAUDE_PLUGIN_ROOT}` (only in `hooks/hooks.json`, `swarmctl`'s `mcpServers` and `references/harness-claude.md`). Antigravity uses a root `plugin.json` and `~/.gemini/config/plugins/<name>/`. Neither plugin data dir is used: state lives in `LEAN_RUNBOOK_DATA` / `LEAN_DESIGN_DATA` (default `~/.cache/lean-*`), shared by hooks and shims.
+   - Claude Code uses `.claude-plugin/plugin.json` and `${CLAUDE_PLUGIN_ROOT}` (only in `hooks/hooks.json`, `swarmctl`'s `mcpServers`, build-loop's `references/version-*.md` and lean-runbook's `references/harness-claude.md`). Antigravity uses a root `plugin.json` and `~/.gemini/config/plugins/<name>/`. Neither plugin data dir is used: state lives in `LEAN_RUNBOOK_DATA` / `LEAN_DESIGN_DATA` (default `~/.cache/lean-*`), shared by hooks and shims.
    - Agent-Skills-compatible harnesses (Codex CLI, Gemini CLI, Cursor, OpenCode, `~/.agents/skills`) load `SKILL.md` folders directly without a marketplace manifest.
 5. **Session telemetry & prompt-cache billing are harness-specific.**
    - `build-loop/scripts/{loop_ledger.py,context_breakdown.py}` parse Claude Code JSONL transcripts under `~/.claude/projects/`.
@@ -70,7 +70,7 @@ If you only have access to **one** model family (or one local model), every plug
 
 | Harness | Skills Install Directory | Persistent Rules File | Subagent / Parallel Mechanism | Gate Enforcement Option |
 |---|---|---|---|---|
-| **Claude Code** | Marketplace (`/plugin install`) or `~/.claude/skills/` | `CLAUDE.md` / `CLAUDE.local.md` | Native `Agent` tool (`agents/*.md`) | Native `hooks/hooks.json` + `!` user override |
+| **Claude Code** | Marketplace (`/plugin install`) or `~/.claude/skills/` | `CLAUDE.md` / `CLAUDE.local.md` | Native `Agent` tool (`agents/*.md`) | Native `hooks/hooks.json` |
 | **Antigravity 2.0** | `~/.gemini/config/plugins/<name>/` (or `~/.gemini/config/skills/`) | `rules/AGENTS.md` / `AGENTS.md` | Native `swarm` (`workspace: "share"`) + `run_workflow` | Native `hooks.json` (`force_ask` / `deny`) |
 | **Codex CLI** | `~/.codex/skills/` (or `~/.agents/skills/`) | `AGENTS.md` | Subagents or `codex exec` headless runs | Instruction gate + optional `.git/hooks/pre-commit` |
 | **Gemini CLI** | `~/.gemini/skills/` (or `~/.agents/skills/`) | `GEMINI.md` / `AGENTS.md` | Subagents or `gemini -p` headless runs | Gemini CLI hooks or `.git/hooks/pre-commit` |
