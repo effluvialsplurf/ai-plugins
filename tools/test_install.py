@@ -21,6 +21,8 @@ class Sandbox(unittest.TestCase):
     repo = ROOT
 
     def setUp(self):
+        if os.environ.get("GATE_FAST") == "1":
+            self.skipTest("installer sandbox tests are skipped by tools/gate.sh --fast")
         self.tmp = Path(tempfile.mkdtemp(prefix="install-test-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.home = self.tmp / "home"
@@ -191,6 +193,95 @@ class TestInstallFixes(Sandbox):
         (self.tmp / "json.py").write_text("open('planted-ran', 'w').close()\n")
         self.install("--status")
         self.assertFalse((self.tmp / "planted-ran").exists())
+
+
+class TestRepairAndGuards(Sandbox):
+    """SLICE-4: legacy link repair (EDGE-3), warnings (EDGE-4), idempotency (CUJ-6)."""
+
+    def link(self, path, target):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
+
+    def test_dangling_legacy_antigravity_link_is_repaired_and_foreign_link_untouched(self):
+        dest = self.home / ".gemini/config/plugins"
+        self.link(dest / "lean-runbook", ROOT / "antigravity/lean-runbook")
+        self.link(dest / "other", "/nonexistent/elsewhere")
+        r = self.install("--antigravity")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(dest / "lean-runbook"), str(ROOT / "plugins/lean-runbook"))
+        self.assertEqual(os.readlink(dest / "other"), "/nonexistent/elsewhere")
+        self.assertFalse((self.home / ".cache/ai-plugins-backups").exists())
+        self.assertIn("repaired", r.stdout)
+
+    def test_legacy_link_is_repaired_even_when_only_filter_excludes_it(self):
+        dest = self.home / ".gemini/config/plugins"
+        self.link(dest / "deep-review", ROOT / "claude/deep-review")
+        self.assertEqual(self.install("--antigravity", "--only", "lean-runbook").returncode, 0)
+        self.assertEqual(os.readlink(dest / "deep-review"), str(ROOT / "plugins/deep-review"))
+
+    def test_dangling_legacy_bin_link_is_repaired_in_place(self):
+        bindir = self.tmp / "bin"
+        self.link(bindir / "swarmctl", ROOT / "claude/swarmctl/scripts/bin/swarmctl")
+        r = self.install("--bin-dir", str(bindir), "--only", "swarmctl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(bindir / "swarmctl"), str(ROOT / "plugins/swarmctl/scripts/bin/swarmctl"))
+        self.assertFalse((self.home / ".cache/ai-plugins-backups").exists())
+
+    def test_dangling_legacy_skills_link_is_repaired(self):
+        dest = self.tmp / "skills"
+        self.link(dest / "lean-runbook", ROOT / "antigravity/lean-runbook/skills/lean-runbook")
+        self.assertEqual(self.install("--skills", str(dest), "--only", "lean-design").returncode, 0)
+        self.assertEqual(os.readlink(dest / "lean-runbook"), str(ROOT / "plugins/lean-runbook/skills/lean-runbook"))
+
+    def test_legacy_link_without_a_new_home_is_warned_about_and_left(self):
+        dest = self.home / ".gemini/config/plugins"
+        self.link(dest / "egm-runbook", ROOT / "claude/egm-runbook")
+        r = self.install("--antigravity")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(dest / "egm-runbook"), str(ROOT / "claude/egm-runbook"))
+        self.assertIn("cannot repair", r.stderr)
+
+    def test_claude_install_updates_the_marketplace_between_add_and_install(self):
+        self.assertEqual(self.install("--claude").returncode, 0)
+        lines = (self.home / "claude.log").read_text().splitlines()
+        self.assertEqual(lines[0], f"plugin marketplace add {ROOT}")
+        self.assertEqual(lines[1], "plugin marketplace update ai-plugins")
+        self.assertTrue(all(l.startswith("plugin install ") for l in lines[2:]), lines)
+
+    def test_stale_statusline_and_zombie_plugin_warn_without_writing(self):
+        cfg = self.home / ".claude"
+        (cfg / "plugins").mkdir(parents=True)
+        files = {cfg / "settings.json": '{"statusLine": {"type": "command", "command": "python3 %s/claude/egm-runbook/scripts/statusline"}}\n' % ROOT,
+                 cfg / "plugins/installed_plugins.json": '{"plugins": {"egm-runbook@ai-plugins": [{}]}}\n'}
+        for f, text in files.items():
+            f.write_text(text)
+        r = self.install("--claude")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("statusLine", r.stderr)
+        self.assertIn("egm-runbook@ai-plugins", r.stderr)
+        for f, text in files.items():
+            self.assertEqual(f.read_bytes(), text.encode(), f)
+
+    def test_clean_claude_config_gives_no_warnings(self):
+        r = self.install("--claude")
+        self.assertNotIn("warning", r.stderr)
+
+    def snapshot(self):
+        snap = {}
+        for p in sorted(self.home.rglob("*")):
+            if p.name == "claude.log":
+                continue
+            st = p.lstat()
+            snap[str(p)] = (os.readlink(p) if p.is_symlink() else None, st.st_mtime_ns, st.st_mode)
+        return snap
+
+    def test_second_install_changes_nothing_on_the_filesystem(self):
+        self.assertEqual(self.install().returncode, 0)
+        before = self.snapshot()
+        self.assertTrue(before)
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == "__main__":

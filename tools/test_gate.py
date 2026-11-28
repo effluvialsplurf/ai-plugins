@@ -98,6 +98,14 @@ class TestGate(GateFixture):
         r = self.gate("--bogus")
         self.assertEqual(r.returncode, 2)
 
+    def test_fast_flag_sets_gate_fast_and_full_run_clears_it(self):
+        (self.root / SUITES[3] / "test_x.py").write_text(
+            "import os, unittest\nclass T(unittest.TestCase):\n    def test_env(self):\n"
+            "        self.assertEqual(os.environ.get('GATE_FAST', 'unset'), os.environ['EXPECT'])\n")
+        for args, expect in ((("--fast",), "1"), ((), "unset")):
+            r = self.gate(*args, env={"EXPECT": expect, "GATE_FAST": "1"})
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, "gate: PASS (4 tests)"), (args, r.stdout))
+
 
 if __name__ == "__main__":
     unittest.main()

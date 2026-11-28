@@ -243,6 +243,38 @@ link_or_copy_dir() {
   fi
 }
 
+# Retarget links that still point into the old claude/ or antigravity/ layout to plugins/.
+# Uses raw readlink (dangling links must resolve); links to anything else are left alone.
+repair_legacy_links() {
+  local dir="$1" l raw new
+  [[ -d "${dir}" ]] || return 0
+  for l in "${dir}"/*; do
+    [[ -L "${l}" ]] || continue
+    raw="$(readlink "${l}")"
+    case "${raw}" in "${REPO_DIR}/claude/"*|"${REPO_DIR}/antigravity/"*) ;; *) continue ;; esac
+    new="${REPO_DIR}/plugins/${raw#"${REPO_DIR}"/*/}"
+    if [[ ! -e "${new}" ]]; then
+      echo "warning: cannot repair ${l} -> ${raw}: ${new} does not exist" >&2
+    elif rm "${l}" && ln -s "${new}" "${l}"; then
+      echo "repaired ${l} -> ${new}"
+    else
+      echo "cannot repair ${l}" >&2
+      return 1
+    fi
+  done
+}
+
+# Warn only (never write) about leftovers of the removed egm-runbook plugin.
+warn_stale_claude_config() {
+  local cfg="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+  if grep -q 'egm-runbook' <(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("statusLine",{}).get("command",""))' "${cfg}/settings.json" 2>/dev/null); then
+    echo "warning: ${cfg}/settings.json statusLine still points at egm-runbook; edit or remove it (left unchanged)." >&2
+  fi
+  if grep -qs 'egm-runbook@ai-plugins' "${cfg}/settings.json" "${cfg}/plugins/installed_plugins.json"; then
+    echo "warning: egm-runbook@ai-plugins is still installed/enabled; run: claude plugin uninstall egm-runbook@ai-plugins" >&2
+  fi
+}
+
 status_antigravity() {
   echo "Antigravity plugins (${AG_DEST}):"
   for reg_entry in "${REGISTRY[@]}"; do
@@ -336,6 +368,7 @@ TOTAL_INSTALLED=0
 
 install_bin() {
   local installed=0
+  repair_legacy_links "${BIN_DEST}" || return 1
   local entry name group rel src dst
   for entry in "${BIN_CATALOG[@]}"; do
     IFS='|' read -r name group rel <<< "${entry}"
@@ -388,6 +421,7 @@ uninstall_bin() {
 
 install_antigravity() {
   local installed=0
+  repair_legacy_links "${AG_DEST}" || return 1
   for reg_entry in "${REGISTRY[@]}"; do
     IFS='|' read -r name reg_src <<< "${reg_entry}"
     src="${REPO_DIR}/${reg_src}"
@@ -440,6 +474,8 @@ install_claude() {
 
   TOTAL_INSTALLED=$((TOTAL_INSTALLED + ${#plugins[@]}))
 
+  warn_stale_claude_config
+
   if ! command -v claude >/dev/null 2>&1; then
     echo "Claude Code CLI not found on PATH."
     echo "In Claude Code, run:"
@@ -452,6 +488,7 @@ install_claude() {
 
   echo "Claude Code: registering local marketplace ${REPO_DIR}..."
   claude plugin marketplace add "${REPO_DIR}" || true
+  claude plugin marketplace update ai-plugins || echo "warning: marketplace update failed; continuing" >&2
 
   for plugin in "${plugins[@]}"; do
     echo "Claude Code: installing ${plugin}@ai-plugins..."
@@ -484,6 +521,7 @@ uninstall_claude() {
 install_skills() {
   local dest
   dest="$(resolve_path_abs "${SKILLS_DEST}")"
+  repair_legacy_links "${dest}" || return 1
   mkdir -p "${dest}"
   local entry skill group rel default_inc src dst
   local installed=0

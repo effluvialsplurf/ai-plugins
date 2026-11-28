@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIN_TESTS=86
 case "${1:-}" in ""|--fast) ;; *) echo "usage: tools/gate.sh [--fast]" >&2; exit 2 ;; esac
 cd "$ROOT"
+# --fast: installer sandbox tests (tools/test_install.py) skip themselves but still count toward the floor.
+if [[ "${1:-}" == "--fast" ]]; then export GATE_FAST=1; else unset GATE_FAST; fi
 
 fail() { echo "gate: FAIL ($1)"; [[ -n "${2:-}" ]] && printf '%s\n' "$2" | tail -40; exit 1; }
 
