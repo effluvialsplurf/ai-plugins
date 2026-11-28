@@ -32,7 +32,7 @@ before the first build; it applies to any work with subagents, not only this loo
    | Claude Code only | Claude only | `references/version-claude-only.md` |
    | Claude Code + Kiro | Claude + Kiro | `references/version-claude-kiro.md` |
    | Claude Code + Codex (Kiro optional) | Claude + Codex | `references/version-claude-codex.md` |
-   | Any other harness or model family (other model families, open-weights, Cursor, OpenCode, Antigravity) | Custom / Agnostic | `references/version-custom-harness.md` |
+   | Any other harness or model family (Gemini, OpenAI/Codex, Open-Weights, Cursor, OpenCode, Antigravity) | Custom / Agnostic | `references/version-custom-harness.md` |
 
 2. **Make `.loop/` in the repo root** and add it to `.git/info/exclude` (or `.gitignore` if the team wants it).
    - `.loop/SEATS.md`: copy the chosen version's seat table. It is the one place that says which model does each role,
@@ -119,7 +119,6 @@ set it per dispatch through your harness's model override. Without an override, 
 | `agents/planner.md` | Design traces, plans, plan fixes, live checks |
 | `agents/builder.md` | Build tasks, fix rounds, doc and skill updates |
 | `agents/reviewer.md` | Plan checks, task reviews, branch reviews, re-reviews (read-only except its report) |
-
 | `templates/` | LOOP-STATE, FINDINGS, implementer contract, dispatch, task-review brief, fixer brief |
 | `scripts/stall-watch.sh`, `scripts/watch-pr.sh` | Waiting without stalling |
 | `scripts/kiro-run.sh`, `scripts/kiro-usage.sh` | Kiro seats (Claude + Kiro and Claude + Codex versions) |

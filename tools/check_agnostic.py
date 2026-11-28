@@ -8,15 +8,13 @@ import re
 import sys
 from pathlib import Path
 
-# Model-family words, provider model IDs, .gemini install paths and plugin-root/data variables. Deliberately NOT bare
-# "claude"/"codex": Claude-first plugins legitimately name their harness and the codex CLI. Narrower than
+# Model-family words, provider model-ID shapes (gemini-/gpt IDs; harness names like Gemini CLI stay legal), .gemini
+# install paths and plugin-root/data variables. Deliberately NOT bare "claude"/"codex": Claude-first plugins legitimately name their harness and the codex CLI. Narrower than
 # tools/test_agnostic_skills.py (SLICE-5, core lean-runbook skills), which also bans those two words.
 # INV-9 (no version probes) is enforced for the core skills by SLICE-5's test, not here; build-loop is out of its scope.
 FORBIDDEN = re.compile(
-    r"\.gemini\b|PLUGIN_(?:ROOT|DATA)|claude-(?:\d|opus|sonnet|haiku|fable|sub)|gpt-\w|\bo[1-9]\b|"
-    r"\b(?:gemini|opus|sonnet|haiku|fable|gpt)\b", re.I)
-# swarmctl's job is to drive runner CLIs, so it may name them; IDs, paths and variables are still banned there.
-RUNNER_OK = {"swarmctl": re.compile(r"\b(?:gemini|gpt)\b", re.I)}
+    r"\.gemini\b|PLUGIN_(?:ROOT|DATA)|claude-(?:\d|opus|sonnet|haiku|fable|sub)|gpt-\w|gpt\s*\d|"
+    r"gemini-(?!cli\b)\w|gemini\s*\d|\bo[1-9]\b|\b(?:opus|sonnet|haiku|fable)\b", re.I)
 ALLOWED = re.compile(r"(?:^|/)references/(?:harness|version)-[^/]*\.md$")  # adapter paths
 # Antigravity hooks.json is scanned; Claude-only hooks/hooks.json and .claude-plugin manifests are not text-scanned
 # (swarmctl's mcpServers legitimately uses ${CLAUDE_PLUGIN_ROOT}); manifests get the key check below instead.
@@ -46,9 +44,6 @@ def scan(root: Path) -> list:
                 text = f.read_text()
                 for n, line in enumerate(text.splitlines(), 1):
                     for m in FORBIDDEN.finditer(line):
-                        ok = RUNNER_OK.get(plugin.name)
-                        if ok and ok.fullmatch(m.group(0)) and not re.match(r"\.gemini|gpt-", line[m.start():], re.I):
-                            continue
                         bad.append(f"{rel(f)}:{n}: forbidden {m.group(0)!r} outside adapter paths")
         for f in sorted(plugin.glob("agents/*.md")):
             fm = re.match(r"---\n(.*?\n)?---", f.read_text(), re.S)

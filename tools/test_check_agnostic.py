@@ -67,7 +67,9 @@ class TestCheckAgnostic(Fixture):
     def test_each_survivor_now_fails_the_scan(self):
         survivors = ["claude-3-5-sonnet-20241022", "claude-3-opus", "claude-fable-1", "opus-5.5", "gpt-oss-120b", "o4-mini",
                      "gemini-pro", "$HOME/.gemini", "${HOME}/.gemini", "/home/u/.gemini/x", "$CLAUDE_PLUGIN_ROOT/a",
-                     "${CLAUDE_PLUGIN_DATA}", "${CLAUDE_PLUGIN_ROOT:-x}", "PLUGIN_DATA", "Sonnet", "HAIKU", "fable"]
+                     "${CLAUDE_PLUGIN_DATA}", "${CLAUDE_PLUGIN_ROOT:-x}", "PLUGIN_DATA", "Sonnet", "HAIKU", "fable",
+                     "Gemini 2.5 Pro", "GPT5", "gpt5", "GPT 5", "gemini-2.5-pro", "gemini-4-argon-high", "model gpt 5",
+                     "--model gemini-2.5-pro"]
         for s in survivors:
             self.write("plugins/p/skills/s/SKILL.md", f"see {s} here\n")
             self.assertTrue(check_agnostic.scan(self.root), s)
@@ -75,6 +77,17 @@ class TestCheckAgnostic(Fixture):
     def test_claude_harness_and_codex_names_stay_legal(self):
         self.write("plugins/p/skills/s/SKILL.md", "Claude Code and the codex CLI; claude-code docs\n")
         self.assertEqual(check_agnostic.scan(self.root), [])
+
+    def test_swarmctl_gets_no_model_id_exemption(self):
+        for s in ("--model gemini-2.5-pro", "gemini-4-argon-high", "Gemini 2.5 Pro", "gemini-pro", "model gpt 5"):
+            self.write("plugins/swarmctl/skills/s/SKILL.md", f"run {s}\n")
+            self.write("plugins/swarmctl/agents/a.md", f"---\nmodel: inherit\n---\n{s}\n")
+            self.assertEqual(len(check_agnostic.scan(self.root)), 2, s)
+
+    def test_harness_names_are_legal_text(self):
+        for s in ("Gemini CLI", "GEMINI.md", "runner: gemini", "gemini-cli", "Gemini, OpenAI/Codex, Open-Weights"):
+            self.write("plugins/p/skills/s/SKILL.md", f"see {s} here\n")
+            self.assertEqual(check_agnostic.scan(self.root), [], s)
 
     def test_hooks_json_is_text_scanned_but_claude_hooks_dir_is_allowlisted(self):
         self.write("plugins/p/hooks.json", '{"command": "${CLAUDE_PLUGIN_ROOT}/x"}')

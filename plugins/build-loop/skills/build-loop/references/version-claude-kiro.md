@@ -6,8 +6,8 @@ rather than running entire PRs end-to-end on it.
 
 ## Seats (copy into `.loop/SEATS.md`)
 
-The agents inherit the controller's model. To seat a different model, pass the Agent tool's `model` parameter on each
-dispatch, per `.loop/SEATS.md`; the table is the suggested seating.
+The agents inherit the controller's model, so when you copy this table write the model into each `.loop/SEATS.md` row
+(planner and reviewer rows opus, builder rows sonnet) and set it per dispatch with the Agent tool's `model` parameter.
 
 | Role | Use | Fallback | Notes |
 |---|---|---|---|

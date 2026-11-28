@@ -56,7 +56,7 @@ Dispatch one fresh, read-only reviewer per requested axis:
   `subagent_type` `deep-review:axis-reviewer` (it carries only the tools a review needs,
   starting at a fraction of a general-purpose agent's context; fall back to
   general-purpose only if that agent type is unavailable).
-- **Other harnesses (Antigravity, Codex CLI, other CLIs, Cursor, OpenCode, etc.):**
+- **Other harnesses (Antigravity, Codex CLI, Gemini CLI, Cursor, OpenCode, etc.):**
   Spawn one fresh read-only subagent/worker per requested axis in parallel using your
   harness's native mechanism (e.g., Antigravity `swarm` or `invoke_subagent`, or
   whatever subagent tool is available). For cross-vendor review, pin the reviewers to a

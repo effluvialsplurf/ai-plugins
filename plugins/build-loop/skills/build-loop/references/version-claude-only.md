@@ -5,8 +5,8 @@ checks that aren't a model's opinion carry more weight.
 
 ## Seats (copy into `.loop/SEATS.md`)
 
-The agents inherit the controller's model. To seat a different model per role, pass the Agent tool's `model` parameter
-on each dispatch, as `.loop/SEATS.md` says. The suggested seating below: Sonnet builds, Opus plans and reviews.
+The agents inherit the controller's model, so when you copy this table write the model into each `.loop/SEATS.md` row
+(planner and reviewer rows opus, builder rows sonnet) and set it per dispatch with the Agent tool's `model` parameter.
 
 | Role | Use | Notes |
 |---|---|---|

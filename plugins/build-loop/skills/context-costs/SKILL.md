@@ -57,8 +57,8 @@ reasoning carried forward across turns. So **fewer calls and fresh contexts pay 
    before it reads anything, and pays for that on every call. List only the tools the seat needs (e.g.
    `tools: Bash, Read, Edit, Write, Grep, Glob` for a builder). Most of the overhead comes from unused built-in tool
    definitions and skill lists. Agent definitions load when a session starts, so restart after changing one.
-5. **Pin the model by its full id** where your harness lets you set one (not an alias) so an alias cannot quietly
-   resolve to an older model.
+5. **Pin the model explicitly.** Where the override accepts only an alias, record the alias in `.loop/SEATS.md` and
+   check the resolved model in the transcript, so an alias cannot quietly resolve to an older model.
 6. **Batch.** All of a step's reads in one message, all of its edits in one message. Each round trip is another
    full-context re-read.
 7. **Scripts for anything mechanical.** Build, restart, test gate, PR chores: one script that prints one line on
