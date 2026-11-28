@@ -22,10 +22,10 @@ Canonical files, types, signals, and entrypoints that downstream slices MUST rel
 
 ## 3. Slice Board (≤3 commits / ≤600 LOC per slice)
 
-| # | Slice Slug | Worker | Status | Est. Size | Depends On | Builder / Critic Pools | Branch |
+| # | Slice Slug | Worker | Status | Est. Size | Depends On | Builder / Reviewer | Branch |
 |---|---|---|---|---|---|---|---|
-| 1 | `<slice-1>` | `slice-<1>` | Queued \| Spec \| Goldfish \| Building \| Merged \| Blocked | 2c / ~300 LOC | none | `claude-sonnet-5-5-medium` / `gemini-4-argon-high` | `slice/<slice-1>` |
-| 2 | `<slice-2>` | `slice-<2>` | Queued | 2c / ~350 LOC | #1 | `gemini-4-argon-medium` / `claude-opus-5-5-high` | `slice/<slice-2>` |
+| 1 | `<slice-1>` | `slice-<1>` | Queued \| Spec \| Goldfish \| Building \| Merged \| Blocked | 2c / ~300 LOC | none | `<builder model>` / `<reviewer model>` | `slice/<slice-1>` |
+| 2 | `<slice-2>` | `slice-<2>` | Queued | 2c / ~350 LOC | #1 | `<builder model>` / `<reviewer model>` | `slice/<slice-2>` |
 
 ## 4. Unforeseen Work / Discovery Inbox
 Logged by Slice Workers instead of scope-creeping their active slice. Triage with the user.

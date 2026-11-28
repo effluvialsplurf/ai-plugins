@@ -27,12 +27,12 @@ without repeating Stage 0–1 brainstorming or re-reading legacy documents.
 |---|---|
 | Section 1 (`Locked Execution Rulings E1..En`) | Section 1 (`Epic Goal & Locked Design Rulings`) |
 | Section 3 (`Shared Contracts Registry Seed`) | Section 2 (`Shared Contracts Registry`) — marked `(planned)` until each slice merges |
-| Section 4 (`Vertical Slice Roadmap`) | Section 3 (`Slice Board`, adding Builder/Critic pools from live `swarm(action="models", all=True)`) |
-| Section 5 & 6 (`CUJs` + `Per-Slice Contract Seeds`) | Pasted directly into each `workspace: "share"` Slice Worker's brief |
+| Section 4 (`Vertical Slice Roadmap`) | Section 3 (`Slice Board`, adding Builder/Reviewer seats) |
+| Section 5 & 6 (`CUJs` + `Per-Slice Contract Seeds`) | Pasted directly into each worktree-isolated Slice Worker's brief |
 
 - **Launch prompt for user:**
   `Start lean runbook epic for <slug> using docs/designs/<slug>/spec.md`
-- The Epic Coordinator creates `epic/<slug>`, commits `.loop/epics/<slug>/EPIC.md` (pre-populated from `spec.md`), and dispatches Wave 1 `workspace: "share"` Slice Workers across Claude Sonnet 5.5 and Gemini 4 Argon immediately!
+- The Epic Coordinator creates `epic/<slug>`, commits `.loop/epics/<slug>/EPIC.md` (pre-populated from `spec.md`), and dispatches Wave 1 worktree-isolated Slice Workers immediately!
 
 ---
 
@@ -59,7 +59,7 @@ Always finish Stage 4 with a compact summary card like this:
 
 Replaces `/egm:egm-drift-report`. Run after `lean-runbook` finishes a feature or Epic (or mid-Epic milestone):
 
-1. Spawn a single read-only `drift-auditor` (**Pool 1:** `gemini-3.8-flash-medium`, fallback `gpt-oss-120b-medium`) with access to:
+1. Spawn a single read-only `drift-auditor` (`explorer` role) with access to:
    - `docs/designs/<slug>/{design.md,tech-plan.md,spec.md}`
    - `.loop/epics/<slug>/EPIC.md` (if Epic) + `git log --oneline <base>..HEAD` + relevant source/test files
 2. Auditor checks every `BR-*`, `RISK-*`, `ADR-*`, and `INV-*` against the **actual codebase and tests** and writes `docs/designs/<slug>/drift-report.md` (**≤150 lines**):

@@ -126,10 +126,10 @@ def next_guidance(state: dict[str, Any]) -> str:
     slug = state.get("slug", "<slug>")
     return {
         "spec": f"Write compact EGM spec at docs/specs/{slug}.md (<=300 lines), then mark spec done.",
-        "goldfish": f"Run 2-pass parallel Goldfish review via native `swarm` (Flash + Argon/Claude) or workflows/goldfish_gate.py on docs/specs/{slug}.md, resolve findings with user, then run `done goldfish` to open the code gate.",
-        "plan": f"Draft single <=300-line contract plan at .loop/{slug}/plan.md (<=3 commits, read-only Argon/Claude planner, no scratch dry-runs).",
-        "build": f"Implement via native `swarm` builder (Claude Sonnet / Argon) + optional workflows/build_loop.py (build_model='inherit', skip_critic=True) with quiet test gate. Never use /teamwork.",
-        "review": f"Run fresh cross-family adversarial whole-branch diff review via native `swarm` critic (opposite flagship pool) + fix pass, then run `finish`.",
+        "goldfish": f"Run 2-pass parallel Goldfish review (fast `reviewer` + strong `reviewer`, or workflows/goldfish_gate.py) on docs/specs/{slug}.md, resolve findings with user, then run `done goldfish` to open the code gate.",
+        "plan": f"Draft single <=300-line contract plan at .loop/{slug}/plan.md (<=3 commits, read-only `planner`, no scratch dry-runs).",
+        "build": f"Implement via a `builder` (see SKILL.md dispatch ladder) + optional workflows/build_loop.py with quiet test gate.",
+        "review": f"Run fresh cross-family adversarial whole-branch diff review via a `reviewer` (different model family from the builder) + fix pass, then run `finish`.",
         "done": f"Feature {slug} is complete. Run `finish` to clear active state.",
     }.get(st, "")
 

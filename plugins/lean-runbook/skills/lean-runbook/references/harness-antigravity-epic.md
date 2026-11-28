@@ -1,6 +1,6 @@
 # Epic Orchestration Mode (Native `swarm` Coordinator + 3-Pool Slice Workers)
 
-Load this reference (along with [quota-routing.md](./quota-routing.md) and the `swarm_pane` skill) when
+Load this reference (along with [harness-antigravity.md](./harness-antigravity.md) and the `swarm_pane` skill) when
 **Stage 0** routes a large, brainstorming-heavy, or multi-workstream feature to **Epic Mode** (>4 slices,
 evolving scope / unforeseen work, or parallel disjoint slices).
 
@@ -27,7 +27,7 @@ brainstorm design decisions with the user, and dispatch `lean-runbook` Slice Wor
 ## 1. Automatic 3-Pool Agent & Model Roster
 
 Run `swarm(action="models", all=True)` at Epic start and before each new wave, then dispatch automatically
-across all **3 independent weekly quota pools** (see [quota-routing.md](./quota-routing.md) for fallbacks):
+across all **3 independent weekly quota pools** (see [harness-antigravity.md](./harness-antigravity.md) for fallbacks):
 
 | Seat | Swarm `name` | `workspace` | Default Model & Pool | When to Spawn |
 |---|---|---|---|---|
